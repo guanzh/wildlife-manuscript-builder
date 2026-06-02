@@ -1,0 +1,3 @@
+# AI Use Statement Template
+
+During manuscript preparation, AI tools were used to assist with [outline generation / language editing / checklist construction / code review / figure-caption drafting / other]. The authors reviewed and verified all AI-assisted content, including factual claims, citations, statistical interpretations, and conservation conclusions. AI tools were not used to make final research judgments, verify permits, determine authorship, or replace human responsibility for the accuracy and integrity of the manuscript. Sensitive species locations and confidential project data were [not shared / shared only within approved local or institutional systems].

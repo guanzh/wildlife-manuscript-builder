@@ -1,0 +1,4 @@
+interface:
+  display_name: "Wildlife Manuscript Builder"
+  short_description: "Draft and pre-review wildlife papers"
+  default_prompt: "Use this skill to evaluate my wildlife conservation data, grade manuscript potential, choose a realistic deliverable direction, and build a reviewable manuscript package with pre-submission checks."
