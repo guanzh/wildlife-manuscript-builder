@@ -71,27 +71,21 @@ For each medium, high, or fatal objection, choose one:
 
 ## Common Objections By Data Type
 
-Camera trap:
+按当前数据类型加载对应 objection 清单。文件位于 `references/domain/objections/`。
 
-- Detection/non-detection not modeled, so occupancy or absence claims are too strong.
-- RAI or photo rate is being interpreted as abundance or density.
-- Independent-event rules are unclear or inconsistent.
-- Human activity metrics are zero-inflated or confounded with camera placement.
-- Spatial gradients are proxies rather than measured ecological distances.
-- Effort differs across sites or seasons.
-- Introduction does not define whether the edge gradient is boundary distance, inside/outside status, spatial ordering, ordination axis, or a composite proxy.
-- Discussion describes HMSC or centroid results as distribution, habitat preference, refuge, or utilization space rather than record-level patterns.
+| 数据类型 | Objection 文件 |
+|---------|---------------|
+| Camera trap | `references/domain/objections/camera-trap.md` |
+| Acoustic monitoring | `references/domain/objections/acoustic.md` |
+| Transect / point survey | `references/domain/objections/transect.md` |
+| Occupancy / distribution | `references/domain/objections/occupancy-distribution.md` |
+| Remote sensing / habitat | `references/domain/objections/remote-sensing.md` |
+| Patrol / threat / management | `references/domain/objections/patrol-threat.md` |
+| Multi-source | `references/domain/objections/multi-source.md` |
 
-Remote sensing:
+其他数据类型（植物群落、种群生态、淡水生态等）的 objection 文件在 `references/domain/objections/` 下持续扩展。
 
-- Land-cover product resolution does not match the ecological process claimed.
-- Temporal mismatch between habitat data and biological observations.
-- Classification accuracy is not reported.
-
-Patrol/threat:
-
-- Patrol effort biases apparent threat hotspots.
-- Management-effectiveness claims lack counterfactual design.
+加载规则：根据 `data-type-routing.md` 中匹配的当前数据类型，加载对应的 objection 文件。
 
 ## Final Rule
 

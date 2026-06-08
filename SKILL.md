@@ -1,15 +1,20 @@
 ---
-name: wildlife-manuscript-builder
-description: Build reviewable, realistically scoped manuscript draft and pre-submission review packages from wildlife conservation and biodiversity datasets. Use when turning camera-trap, acoustic, transect, occupancy, species distribution, habitat, remote-sensing, patrol, threat, or multi-source conservation data into manuscript potential grades, feasible writing directions, deep-research plans, readiness reports, information-gap lists, argument and terminology contracts, method-completeness audits, section-length budgets, result cards, IMRAD drafts, data-availability/source-data checks, conclusion-strength checks, sensitive-species data-security checks, layout QA, revision loops, and AI-use disclosure.
+name: ecology-manuscript-builder
+description: Build reviewable, realistically scoped manuscript draft and pre-submission review packages from ecology and biodiversity datasets. Use when turning camera-trap, acoustic, transect, vegetation-survey, mark-recapture, occupancy, species distribution, habitat, remote-sensing, eDNA, patrol, threat, or multi-source ecological data into manuscript potential grades, feasible writing directions, deep-research plans, readiness reports, information-gap lists, argument and terminology contracts, method-completeness audits, section-length budgets, result cards, IMRAD drafts, data-availability/source-data checks, conclusion-strength checks, sensitive-data security checks, layout QA, revision loops, and AI-use disclosure.
+metadata:
+  hermes:
+    aliases: [wildlife-manuscript-builder]
+    tags: [ecology, biodiversity, manuscript, research-writing, conservation, data-analysis]
+    related_skills: [goal-driven-research-system, academic-paper, deep-research]
 ---
 
-# Wildlife Manuscript Builder
+# Ecology Manuscript Builder
 
 ## Operating Principle
 
 Build a reviewable and deliverable manuscript draft package, not an automatic publication claim. Always start with data readiness, manuscript potential grading, permissions, sensitive-location handling, and question-method fit before drafting prose.
 
-Final prose can be polished, but the primary deliverable is the evidence chain: readiness report, journal target contract, section length quality gate, submission metadata contract, data contract, author-knowledge integration, information-gap list, research question map, answerable-unanswered-question check, argument and terminology contract, analysis plan, statistical delivery gate, result cards, figure/table assembly, deep literature matrix, introduction quality gate, claim ledger, discussion/conclusion quality gate, conclusion-strength audit, method-completeness audit, statistical enhancement list, data-availability/source-data gate, sensitive-species security check, layout QA, reviewer-objection simulation, citation coverage check, reference verification, manuscript draft, delivery readiness score, integrity checklist, AI-use statement, and revision tasks.
+Final prose can be polished, but the primary deliverable is the evidence chain: readiness report, journal target contract, section length quality gate, submission metadata contract, data contract, author-knowledge integration, information-gap list, research question map, answerable-unanswered-question check, argument and terminology contract, analysis plan, statistical delivery gate, result cards, figure/table assembly, deep literature matrix, introduction quality gate, claim ledger, discussion/conclusion quality gate, conclusion-strength audit, method-completeness audit, statistical enhancement list, data-availability/source-data gate, sensitive-data security check, layout QA, reviewer-objection simulation, citation coverage check, reference verification, manuscript draft, delivery readiness score, integrity checklist, AI-use statement, and revision tasks.
 
 Do not try to force weak data into a high-quality paper. Match the manuscript ambition to the actual carrying capacity of the data, topic novelty, methods, and literature position.
 
@@ -76,7 +81,7 @@ Do not try to force weak data into a high-quality paper. Match the manuscript am
 
 25. Run `references/figure-table-assembly.md` to ensure central figures/tables, captions, supplements, and sensitive-data handling are ready.
 26. Run `references/data-availability-source-data.md` to map datasets, figure source data, code, repositories/access routes, FAIR metadata, and sensitive-data restrictions.
-27. For DOCX/journal-format outputs, run layout QA with `scripts/check_docx_layout_qa.py`; for sensitive species, run `scripts/check_sensitive_species_security.py`.
+27. For DOCX/journal-format outputs, run layout QA with `scripts/check_docx_layout_qa.py`; for sensitive species, run `scripts/check_sensitive_data_security.py`.
 28. Run the improvement loop from `references/revision-loop.md`.
 
 **Phase F: Finalization（步骤 29-31）**
@@ -351,11 +356,11 @@ Required output:
 - FAIR metadata check for shareable datasets.
 - Draft data/code availability statement with sensitive-species restrictions and author-confirmation fields.
 
-For sensitive wildlife data, public outputs should normally separate summary data and code from exact coordinates, raw media, and patrol-sensitive information.
+For sensitive ecological data (threatened species locations, patrol routes, archaeological sites, private land), public outputs should normally separate summary data and code from exact coordinates, raw media, and patrol-sensitive information.
 
 ### Gate 8.8: Sensitive-Species Security
 
-For threatened, traded, poached, patrol-sensitive, or otherwise sensitive species, run the sensitive-species section of `references/pre-submission-review-gates.md` and optionally `scripts/check_sensitive_species_security.py`.
+For threatened, traded, poached, patrol-sensitive, or otherwise sensitive species, run the sensitive-species section of `references/pre-submission-review-gates.md` and optionally `scripts/check_sensitive_data_security.py`.
 
 Block journal-format or submission-ready status if the public manuscript exposes exact coordinates, raw point metadata, patrol-sensitive locations, or unapproved data-sharing language. Separate raw media, event tables, point metadata, and analysis code in the data availability statement.
 
@@ -430,13 +435,13 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - `references/journal-target-contract.md`: target journal, article type, format rules, required statements, outputs, and default no-TOC manuscript rule.
 - `references/section-length-quality-gate.md`: soft Introduction, Discussion, and Conclusion budgets by article type.
 - `references/submission-metadata-contract.md`: author, affiliation, funding, ethics, permits, conflicts, data/code, and sensitive-location metadata.
-- `references/pre-submission-review-gates.md`: missing-information handling, conclusion-strength audit, method-completeness template, statistical enhancement suggestions, DOCX layout QA, and sensitive-species data security.
+- `references/pre-submission-review-gates.md`: missing-information handling, conclusion-strength audit, method-completeness template, statistical enhancement suggestions, DOCX layout QA, and sensitive-data security.
 - `references/data-contract.md`: freeze raw facts, derived facts, variable provenance, count reconciliation, and manuscript-safe facts before writing.
 - `references/author-knowledge-integration.md`: classify existing manuscripts, notes, protocols, appendices, and review comments into adopt, verify, narrow, or exclude.
 - `references/deep-literature-standard.md`: require deep research depth, usually at least 30 verified sources for a standard empirical article.
 - `references/manuscript-potential-rubric.md`: low/medium/high potential grading for deliverable manuscript paths.
 - `references/deliverable-pathways.md`: choose an output path that matches actual data carrying capacity.
-- `references/question-method-map.md`: map wildlife conservation questions to method families and draft sections.
+- `references/question-method-map.md`: map ecological research questions to method families and manuscript sections.
 - `references/answerable-unanswered-question.md`: use deep research to decide whether a researchable gap exists.
 - `references/argument-terminology-contract.md`: lock one-sentence argument, reader promise, paragraph jobs, and canonical terminology before drafting.
 - `references/claim-boundaries.md`: common overclaims and safer alternatives.
@@ -451,7 +456,7 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - `references/discussion-conclusion-quality-gate.md`: require effect-size back-references, cautious wording, concise conclusions.
 - `references/reviewer-objection-simulator.md`: stress-test novelty, methods, evidence strength, variables, limitations, journal fit.
 - `references/revision-loop.md`: evaluate, author-decide, and revise without over-inflating claims.
-- `references/conservation-language.md`: translate statistical results into conservation language without overclaiming.
+- `references/domain/language/conservation.md`: translate statistical results into conservation language without overclaiming. For other subfields, see `references/domain/language/`.
 - `references/delivery-readiness-score.md`: label the output as internal/ reviewable/ journal-format/ submission-ready.
 - `references/journal-package-checklist.md`: final package and integrity checklist.
 - `references/decision-loop.md` *(new)*: PROCEED/REFINE/DOWNGRADE/BLOCK decisions at 5 key gates.
@@ -470,7 +475,7 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - `scripts/check_conclusion_strength.py`: first-pass audit for unsupported replacement, proof, reliability, standard-protocol, management-effectiveness, and sampling-window claims.
 - `scripts/check_acoustic_method_completeness.py`: first-pass checklist for acoustic automated-recognition method details, including human annotation, model, threshold, post-processing, matching sensitivity, and uncertainty.
 - `scripts/check_statistical_enhancements.py`: first-pass recommendations for Wilson/exact confidence intervals, matching-threshold sensitivity, site-level uncertainty, threshold curves, and sampling-window boundaries.
-- `scripts/check_sensitive_species_security.py`: first-pass audit for exact-coordinate leakage and missing sensitive-location/data-sharing statements.
+- `scripts/check_sensitive_data_security.py`: first-pass audit for exact-coordinate leakage and missing sensitive-location/data-sharing statements.
 - `scripts/check_docx_layout_qa.py`: first-pass DOCX audit for embedded images, content types, captions, placeholders, table width risk, accidental TOC, and coordinate-like text.
 - `scripts/check_delivery_readiness.py`: first-pass file-level audit of delivery readiness and accidental table-of-contents outputs.
 - `scripts/make_manuscript_skeleton.py`: create a manuscript package skeleton.

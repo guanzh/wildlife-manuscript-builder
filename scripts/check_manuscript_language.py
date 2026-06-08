@@ -7,6 +7,38 @@ methods limitation, but it should be reviewed before finalizing the manuscript.
 """
 
 from __future__ import annotations
+# Configurable domain-specific overclaim patterns
+# Add patterns for your ecology subfield as needed
+DOMAIN_PATTERNS = {
+    "camera_trap": {
+        "overclaims": [
+            (r"photo\s*rate.*density", "Photo rate interpreted as density"),
+            (r"RAI.*abundance", "RAI interpreted as abundance"),
+            (r"encounter\s*rate.*population\s*size", "Encounter rate treated as population size"),
+        ]
+    },
+    "hmsc_centroid": {
+        "overclaims": [
+            (r"true\s*distribution", "HMSC record → true distribution claim"),
+            (r"core\s*habitat", "Centroid → core habitat claim"),
+            (r"refuge", "Centroid → refuge claim"),
+            (r"home\s*range", "Centroid → home range claim"),
+        ]
+    },
+    "vegetation": {
+        "overclaims": [
+            (r"species\s*richness.*habitat\s*quality", "Richness alone → habitat quality"),
+            (r"diversity.*ecosystem\s*health", "Diversity alone → ecosystem health claim"),
+        ]
+    },
+    "population": {
+        "overclaims": [
+            (r"apparent\s*survival.*true\s*survival", "Apparent survival treated as true survival"),
+            (r"trend.*viability", "Population trend treated as viability"),
+        ]
+    },
+}
+
 
 import argparse
 import re

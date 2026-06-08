@@ -15,6 +15,20 @@ Use this file before drafting title, abstract, Results, and Discussion.
 | AI classification accuracy guarantees ecological reliability. | Classification uncertainty should be propagated or acknowledged in ecological inference. |
 | Animal records prove forest integrity. | Animal community evidence contributes one dimension of habitat integrity assessment. |
 
+
+## Domain-Specific Overclaim Patterns
+
+按数据类型加载特化 overclaim 规则：
+
+| 数据类型 | Overclaim 文件 |
+|---------|---------------|
+| Camera trap | `references/domain/overclaims/camera-trap.md` |
+| Remote sensing / habitat | `references/domain/overclaims/remote-sensing.md` |
+
+其他数据类型的 overclaim 文件在 `references/domain/overclaims/` 下持续扩展。
+
+加载规则：根据 `data-type-routing.md` 中匹配的当前数据类型，加载对应的 overclaim 文件。
+
 ## Words That Require Evidence
 
 Use these only when supported by design and analysis: cause, effect, mechanism, driver, recovery, degradation, collapse, restoration success, population increase, population decline, density, abundance, interaction, intactness, effectiveness.

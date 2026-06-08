@@ -31,47 +31,20 @@ If the interval crosses zero or uncertainty is high, discussion language must sh
 
 ## Human Activity Metrics
 
-When discussing human RAI or human activity indices:
-
-- Define what event types are included.
-- Define what event types are excluded or separated, such as staff, patrol, livestock, dogs, vehicles, unknown people, or community residents.
-- State the zero structure and sample-size limitation when many sites have zero records.
-- Interpret non-significance as "no clear statistical association detected under the current sample structure and metric definition", not "no effect".
+> 详细规则见 `references/domain/interpretation/human-activity-metrics.md`。
+> 核心原则：定义 event type、报告零值结构、非显著结果解释为 "no clear statistical association detected"，非 "no effect"。
+>
+> 摘要：定义纳入和排除的 event 类型（staff, patrol, livestock, dogs, vehicles 等），说明零值结构和样本量限制。非显著结果使用谨慎措辞。
 
 ## HMSC and Species-Level Responses
 
-For HMSC, occupancy, or detection/non-detection models, match language to the response variable.
-
-Use:
-
-- "recorded occurrence",
-- "site-level recording tendency",
-- "camera-recorded presence",
-- "records were more concentrated at...".
-
-Avoid unless directly supported:
-
-- "true distribution",
-- "habitat preference",
-- "population decline",
-- "avoidance",
-- "abundance response",
-- "management effectiveness".
-
-If species credible intervals differ in strength, separate them:
-
-- stronger negative response,
-- negative tendency,
-- uncertain response.
+> 详细规则见 `references/domain/interpretation/camera-trap-hmsc.md`。
+> 核心原则：语言匹配 response variable — 使用 "recorded occurrence" / "site-level recording tendency"，避免 "true distribution" / "habitat preference" / "abundance response"。区分强反应、弱趋势、不确定反应。
 
 ## Ordination, Centroid, and Two-Dimensional Gradient Language
 
-If using PCA, NMDS, coordinate space, species centroid, or weighted centroid:
-
-- Define the axes before interpretation.
-- State that centroids describe record locations in the chosen gradient space.
-- Avoid "core habitat", "refuge", "long-term use area", or "home range" unless independent evidence supports those meanings.
-- Prefer "low human RAI record concentration area" or "inner-side low human-record region" when the evidence is record-level only.
+> 详细规则见 `references/domain/interpretation/ordination-centroid.md`。
+> 核心原则：先定义轴、说明 centroid 描述 record location in gradient space。避免 "core habitat" / "refuge" / "home range"。使用 "low human RAI record concentration area" 等 record-level 措辞。
 
 ## Management Implications
 

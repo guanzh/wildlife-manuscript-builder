@@ -45,25 +45,11 @@ Required output:
 
 ## 3. Acoustic / Automated-Recognition Method Completeness
 
-For manuscripts validating machine recognition, check these items before calling the draft journal-format:
+> 完整检查清单见 `references/domain/method-checks/acoustic.md`。
+> 核心要求：human annotator count, double review, disagreement handling, annotation software, event definition, model name/version, model architecture, training data source, threshold, confidence output, post-processing, runtime environment, event matching rule, matching-threshold sensitivity, 95% CI。
 
-| Method item | Required detail | If missing |
-|---|---|---|
-| Human annotator count | Number and expertise of annotators | Add to information gap list; state human annotations are a reference standard with caveat |
-| Double review | Whether independent double listening was done | Add limitation or require re-annotation |
-| Disagreement handling | Consensus, adjudication, or exclusion rule | Do not overstate human reference quality |
-| Annotation software | Software/version or listening platform | Add to Methods gap list |
-| Event definition | What counts as one call event | Results not final until defined |
-| Machine model name/version | Model identity and version | Treat as black-box application validation only |
-| Model architecture | CNN, transformer, spectrogram classifier, etc. | Do not claim algorithmic contribution |
-| Training data source | Region/species/date and sample composition | Add reviewer risk |
-| Threshold setting | Probability/score threshold and selection basis | Metrics are not reproducible until provided |
-| Confidence output | Score/probability field availability | If present, request PR curve or threshold sensitivity |
-| Post-processing | Clip merging, event boundary, duplicate removal | Event-level results require caveat |
-| Runtime environment | Software, package, hardware if relevant | Add reproducibility gap |
-| Event matching rule | Same site/date plus overlap or tolerance | Must be in Methods |
-| Matching sensitivity | Alternative thresholds such as 3, 5, 10, 15 min | Required if event-level conclusions are central |
-| Uncertainty | 95% CI for recall, precision, specificity, accuracy | Required for journal-format validation paper |
+Before calling a machine-recognition validation manuscript journal-format, load and complete the checklist in `references/domain/method-checks/acoustic.md`.
+If model name/version, training data, threshold, or post-processing are missing, frame the draft as a black-box application validation or method-validation draft.
 
 ## 4. Statistical Enhancement Suggestions
 
