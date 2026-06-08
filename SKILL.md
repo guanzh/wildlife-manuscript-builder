@@ -13,39 +13,80 @@ Final prose can be polished, but the primary deliverable is the evidence chain: 
 
 Do not try to force weak data into a high-quality paper. Match the manuscript ambition to the actual carrying capacity of the data, topic novelty, methods, and literature position.
 
-## Start Here
+## Pipeline: 31 Steps / 6 Phases
+
+> **Decision loop:** Key gates include PIVOT/REFINE/DOWNGRADE decisions (see `references/decision-loop.md`).
+> **Watchdog:** Quality sentinel runs throughout — see `references/sentinel-watchdog.md`.
+> **Debate:** Multi-perspective debate available at direction selection and peer review — see `references/multi-perspective-debate.md`.
+
+**Phase A: Discovery & Permission（步骤 1-4）**
+*Goal: Confirm what data exists, what's missing, and where the manuscript is headed — before any analysis.*
 
 1. Inspect the user's data package and request any missing essential files only when they cannot be inferred from local context.
 2. If a package directory is available, run `scripts/audit_data_package.py <package_dir>` to produce a first-pass readiness report.
 3. Build a journal target contract with `references/journal-target-contract.md`. If no target journal is known, create a provisional contract. Manuscript/article DOCX outputs should not include a table of contents unless explicitly requested or required. Use `references/section-length-quality-gate.md` to set a soft Introduction, Discussion, and Conclusion budget for the article type.
 4. Build a submission metadata contract with `references/submission-metadata-contract.md`; mark author list, affiliations, funding, permits, ethics, conflicts, data availability, and sensitive-location policy as confirmed or author-confirmation needed.
+
+**Phase B: Data Readiness（步骤 5-9）**
+*Goal: Freeze what the data actually contains — no drafting until facts are reconciled.*
+
 5. Freeze a data contract with `references/data-contract.md`: raw facts, derived facts, variable provenance, count reconciliation, and manuscript-safe facts.
 6. Build a pre-submission information-gap list with `references/pre-submission-review-gates.md`; keep missing metadata and author tasks out of the formal manuscript body whenever possible.
 7. If the user provides an existing manuscript, notes, appendices, protocol, or review comments, run `references/author-knowledge-integration.md` to adopt factual material, verify uncertain items, narrow overclaims, and exclude unsupported content.
+
+> **🔴 Gate 1: Data Contract Freeze** — If counts, variable definitions, or model outputs conflict and cannot be reconciled, BLOCK. Output a data-contract issue list and the smallest defensible deliverable. Do not draft a standard manuscript.
+
 8. Grade manuscript potential with `references/manuscript-potential-rubric.md`; optionally use `scripts/score_manuscript_potential.py`.
 9. Choose a deliverable path from `references/deliverable-pathways.md`: low, medium, or high potential.
+
+**Phase C: Direction & Deep Research（步骤 10-14）**
+*Goal: Find a specific, answerable question — or downgrade before wasting effort.*
+
 10. Identify the data type and load the relevant section of `references/data-type-routing.md`.
 11. Map feasible research questions to methods using `references/question-method-map.md`.
 12. Use deep research to evaluate the selected direction with `references/deep-literature-standard.md`: nearest literature, what has already been answered, what remains unanswered, target venues, method boundaries, and whether the dataset can add a defensible contribution. For a standard research article, target at least 30 verified sources before full drafting.
-13. Run `references/answerable-unanswered-question.md`. If no question is both under-answered in the literature and answerable by the current data, downgrade to a monitoring baseline, data note, local report, or methods note.
+13. Run `references/answerable-unanswered-question.md`.
+
+> **🔴 Gate 2: Answerable Question** — **PROCEED** if a specific, under-answered question is identified and the data can answer it. **REFINE** if the gap exists but the method boundary is fuzzy — narrow the question scope and re-evaluate. **DOWNGRADE** if no answerable question exists — produce a monitoring baseline, data note, local report, or methods note instead.
+
 14. Build an argument and terminology contract with `references/argument-terminology-contract.md`: one-sentence argument, reader promise, paragraph jobs, and canonical terms.
+
+**Phase D: Analysis & Evidence（步骤 15-19）**
+*Goal: Run analyses, build result cards, and lock the evidence chain before drafting prose.*
+
 15. Check prohibited or over-strong claims using `references/claim-boundaries.md`.
 16. Run `references/statistical-delivery-gate.md` to decide whether central analyses are ready, usable with caveat, need more analysis, or should be removed.
 17. For acoustic/automated-recognition manuscripts, run the method-completeness gate in `references/pre-submission-review-gates.md` and optionally `scripts/check_acoustic_method_completeness.py` on the draft.
+
+> **🔴 Gate 3: Statistical Delivery** — **PROCEED** if central results are "ready" or "usable with caveat". **REFINE** if results "need analysis" — run additional analysis before drafting. **BLOCK** if results are "not usable" — output a readiness report, do not draft Results.
+
 18. Build result cards before drafting Results. Use `references/result-card-template.md` or `scripts/build_result_cards.py`.
 19. Build a literature matrix and citation plan before drafting Introduction or Discussion; the matrix must assign sources to Introduction, Methods, Discussion, regional context, and software/data functions.
+
+**Phase E: Drafting & Quality（步骤 20-28）**
+*Goal: Write the manuscript, then stress-test every claim, section, and figure.*
+
 20. Build an Introduction argument plan with `references/introduction-quality-gate.md`; define core variables, sharpen the specific gap, and map each research question to a method.
 21. Build a claim ledger with `references/claim-ledger.md` before drafting Discussion; update it after the draft.
-22. Draft in this order: Methods, Results, Discussion, Introduction, Abstract, Title. Avoid putting author-task placeholders into the main scientific narrative; place them in an appendix or information-gap list unless essential for transparency.
-23. Run `references/discussion-conclusion-quality-gate.md` and re-run `references/section-length-quality-gate.md`; revise Discussion and Conclusion so central claims include effect size/uncertainty, cautious HMSC/centroid wording, clear human-RAI definition, no internal process language, and a length justified by function rather than padding.
+22. Draft in this order: Methods, Results, Discussion, Introduction, Abstract, Title. Avoid putting author-task placeholders into the main scientific narrative.
+23. Run `references/discussion-conclusion-quality-gate.md` and re-run `references/section-length-quality-gate.md`.
 24. Run conclusion-strength and statistical-enhancement checks with `references/pre-submission-review-gates.md`, `scripts/check_conclusion_strength.py`, and `scripts/check_statistical_enhancements.py`; narrow strong claims that lack direct support.
-25. Run `references/figure-table-assembly.md` to ensure central figures/tables, captions, supplements, and sensitive-data handling are ready for the intended delivery level.
+
+> **🔴 Gate 4: Conclusion Strength** — **PROCEED** if all strong claims have direct support. **REFINE** if claims need narrowing or caveats. **BLOCK** if strong unsupported claims remain — revise before reviewer simulation.
+
+25. Run `references/figure-table-assembly.md` to ensure central figures/tables, captions, supplements, and sensitive-data handling are ready.
 26. Run `references/data-availability-source-data.md` to map datasets, figure source data, code, repositories/access routes, FAIR metadata, and sensitive-data restrictions.
-27. For DOCX/journal-format outputs, run layout QA with `scripts/check_docx_layout_qa.py`; for sensitive species, run `scripts/check_sensitive_species_security.py` or the sensitive-species gate in `references/pre-submission-review-gates.md`.
+27. For DOCX/journal-format outputs, run layout QA with `scripts/check_docx_layout_qa.py`; for sensitive species, run `scripts/check_sensitive_species_security.py`.
 28. Run the improvement loop from `references/revision-loop.md`.
+
+**Phase F: Finalization（步骤 29-31）**
+*Goal: Simulate reviewers, verify citations, score delivery readiness — ship or loop back.*
+
 29. Run reviewer-objection simulation with `references/reviewer-objection-simulator.md` and revise or disclose the resulting risks.
-30. Run citation coverage with `references/citation-coverage-check.md` and optionally `scripts/check_citation_coverage.py --min-references 30` for a standard research article; run `references/reference-verification.md` for DOI/title/year/source checks; run claim-ledger coverage with `scripts/check_claim_ledger.py` when a ledger exists; run process-language and overclaim checks with `scripts/check_manuscript_language.py`.
+30. Run citation coverage with `references/citation-coverage-check.md` and optionally `scripts/check_citation_coverage.py --min-references 30`; run `references/reference-verification.md` for DOI/title/year/source checks; run claim-ledger coverage with `scripts/check_claim_ledger.py`; run process-language and overclaim checks with `scripts/check_manuscript_language.py`.
 31. Finish with `references/delivery-readiness-score.md`, `references/journal-package-checklist.md`, optionally `scripts/check_delivery_readiness.py <package_dir>`, and an AI-use statement from `assets/ai-use-statement-template.md`.
+
+> **🔴 Gate 5: Delivery Readiness** — Assign Level 1-4. Do not call a manuscript submission-ready unless all Level 4 requirements are confirmed. If serious reviewer objections remain unaddressed, loop back to Phase E.
 
 ## Minimum Input Contract
 
@@ -387,32 +428,38 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 
 - `references/data-type-routing.md`: data-type-specific routes, common outputs, and boundaries.
 - `references/journal-target-contract.md`: target journal, article type, format rules, required statements, outputs, and default no-TOC manuscript rule.
-- `references/section-length-quality-gate.md`: soft Introduction, Discussion, and Conclusion budgets by article type, with diagnostics for underdeveloped or overextended sections.
+- `references/section-length-quality-gate.md`: soft Introduction, Discussion, and Conclusion budgets by article type.
 - `references/submission-metadata-contract.md`: author, affiliation, funding, ethics, permits, conflicts, data/code, and sensitive-location metadata.
-- `references/pre-submission-review-gates.md`: missing-information handling, conclusion-strength audit, method-completeness template, statistical enhancement suggestions, sampling-window logic, DOCX layout QA, and sensitive-species data security.
+- `references/pre-submission-review-gates.md`: missing-information handling, conclusion-strength audit, method-completeness template, statistical enhancement suggestions, DOCX layout QA, and sensitive-species data security.
 - `references/data-contract.md`: freeze raw facts, derived facts, variable provenance, count reconciliation, and manuscript-safe facts before writing.
 - `references/author-knowledge-integration.md`: classify existing manuscripts, notes, protocols, appendices, and review comments into adopt, verify, narrow, or exclude.
 - `references/deep-literature-standard.md`: require deep research depth, usually at least 30 verified sources for a standard empirical article.
 - `references/manuscript-potential-rubric.md`: low/medium/high potential grading for deliverable manuscript paths.
 - `references/deliverable-pathways.md`: choose an output path that matches actual data carrying capacity.
 - `references/question-method-map.md`: map wildlife conservation questions to method families and draft sections.
-- `references/answerable-unanswered-question.md`: use deep research to decide whether a researchable gap exists and whether the current data can answer it.
+- `references/answerable-unanswered-question.md`: use deep research to decide whether a researchable gap exists.
 - `references/argument-terminology-contract.md`: lock one-sentence argument, reader promise, paragraph jobs, and canonical terminology before drafting.
 - `references/claim-boundaries.md`: common overclaims and safer alternatives.
-- `references/statistical-delivery-gate.md`: audit model diagnostics, effort handling, sensitivity checks, result readiness, and table/figure-ready outputs.
+- `references/statistical-delivery-gate.md`: audit model diagnostics, effort handling, sensitivity checks, result readiness.
 - `references/result-card-template.md`: reusable result-card and literature-matrix templates.
 - `references/figure-table-assembly.md`: assemble main figures/tables, captions, supplements, and sensitive-data checks for delivery.
-- `references/data-availability-source-data.md`: map datasets, source data, code, repository/access routes, FAIR metadata, and sensitive-data restrictions.
-- `references/introduction-quality-gate.md`: sharpen research gap, define core concepts, remove process language, and map objectives to methods.
-- `references/claim-ledger.md`: map every manuscript claim to data, results, literature, assumptions, caveats, and claim strength.
+- `references/data-availability-source-data.md`: map datasets, source data, code, repository/access routes, FAIR metadata.
+- `references/introduction-quality-gate.md`: sharpen research gap, define core concepts, remove process language.
+- `references/claim-ledger.md`: map every manuscript claim to data, results, literature, assumptions, caveats.
 - `references/citation-coverage-check.md`: ensure deep research sources, in-text citations, and reference list form a complete loop.
 - `references/reference-verification.md`: verify title, DOI, year, source, status, URL, and official report/database metadata.
-- `references/discussion-conclusion-quality-gate.md`: require effect-size back-references, cautious human-RAI/HMSC/centroid wording, concise conclusions, and formal language.
-- `references/reviewer-objection-simulator.md`: stress-test novelty, methods, evidence strength, variables, limitations, and journal fit before finalizing.
+- `references/discussion-conclusion-quality-gate.md`: require effect-size back-references, cautious wording, concise conclusions.
+- `references/reviewer-objection-simulator.md`: stress-test novelty, methods, evidence strength, variables, limitations, journal fit.
 - `references/revision-loop.md`: evaluate, author-decide, and revise without over-inflating claims.
 - `references/conservation-language.md`: translate statistical results into conservation language without overclaiming.
-- `references/delivery-readiness-score.md`: label the output as internal scientific draft, reviewable manuscript, journal-format manuscript, or submission-ready package.
+- `references/delivery-readiness-score.md`: label the output as internal/ reviewable/ journal-format/ submission-ready.
 - `references/journal-package-checklist.md`: final package and integrity checklist.
+- `references/decision-loop.md` *(new)*: PROCEED/REFINE/DOWNGRADE/BLOCK decisions at 5 key gates.
+- `references/sentinel-watchdog.md` *(new)*: 5 continuous quality guards (NaN/Inf, consistency, citation, claim, sensitive data).
+- `references/multi-perspective-debate.md` *(new)*: conservative/moderate/ambitious 3-perspective debate protocol.
+- `references/run-lessons.md` *(new)*: self-learning — capture lessons from each run, convert to reusable skills.
+- `references/knowledge-base-spec.md` *(new)*: structured KB output (decisions/findings/literature/reviews) for RWKM integration.
+- `references/branch-exploration.md` *(new)*: experimental parallel direction exploration.
 - `scripts/audit_data_package.py`: first-pass file and column audit for a data package.
 - `scripts/score_manuscript_potential.py`: questionnaire-based manuscript potential grading.
 - `scripts/build_result_cards.py`: create blank or CSV-driven result cards.
