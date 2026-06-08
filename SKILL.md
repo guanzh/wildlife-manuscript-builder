@@ -456,6 +456,9 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - `references/discussion-conclusion-quality-gate.md`: require effect-size back-references, cautious wording, concise conclusions.
 - `references/reviewer-objection-simulator.md`: stress-test novelty, methods, evidence strength, variables, limitations, journal fit.
 - `references/revision-loop.md`: evaluate, author-decide, and revise without over-inflating claims.
+- `references/domain/method-checks/arrive.md`: ARRIVE 2.0 reporting guidelines for animal research, mapped to ecology skill gates.
+- `references/domain/interpretation/evidence-quality.md`: evidence quality assessment framework adapted from GRADE for ecological studies.
+- `references/domain/language/ecology.md`: terminology and language guide for ecology and biodiversity writing.
 - `references/domain/language/conservation.md`: translate statistical results into conservation language without overclaiming. For other subfields, see `references/domain/language/`.
 - `references/delivery-readiness-score.md`: label the output as internal/ reviewable/ journal-format/ submission-ready.
 - `references/journal-package-checklist.md`: final package and integrity checklist.

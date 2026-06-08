@@ -59,3 +59,17 @@ Upgrade only when new evidence is added, not by rewriting. Examples:
 - Add validation for automated classifications.
 - Add literature positioning that reveals a real gap.
 - Add supplementary data, code, or spatial covariates.
+
+## Evidence Quality Dimension
+
+> 详细评估框架见 `references/domain/interpretation/evidence-quality.md`。
+
+除传统维度（采样设计、样本量、数据完整性、方法匹配度、新颖性、文献空白）外，
+增加独立证据质量评估：
+
+- 证据层次：系统综述/长期监测/重复调查/单次调查/机会性记录
+- 降级因素：检测偏倚、混杂、不精确性、不一致性
+- 升级因素：大效应量、梯度关系、多渠道验证
+- 综合评级：A（高）/ B（中）/ C（低）/ D（极低）
+
+证据质量评级独立于研究设计层级——一个单次系统调查（IV级设计）可以通过严谨的检测建模和充足的样本量达到 B 级证据质量。

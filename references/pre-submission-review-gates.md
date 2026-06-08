@@ -112,6 +112,17 @@ For threatened, traded, poached, or otherwise sensitive wildlife:
 - Include a sensitive-location statement and permit/data-authorization confirmation.
 - If exact coordinates appear in the draft or public package, block submission-ready status.
 
+
+
+## 9. Reporting Guidelines Compliance (ARRIVE)
+
+> 对于涉及动物实验或野外动物研究的 manuscript，建议遵循 ARRIVE 2.0 报告指南。
+> 完整检查清单见 `references/domain/method-checks/arrive.md`。
+
+ARRIVE Essential 10 条目与 ecology-manuscript-builder 现有 gate 有明确对应关系。
+在 pre-submission information-gap list 中标注未满足的 ARRIVE 条目。
+如研究设计不适用某条目（如野外观测研究无随机化/盲法），标注"N/A"即可，不需要 block。
+
 ## 8. Required Pre-Submission Review Outputs
 
 For a reviewable manuscript:
