@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "prompt": "我有一组红外相机数据，19个位点，4177个有效相机日，记录了20种兽类。数据在 data/ 目录下，包含站点信息、独立事件表和生境变量。我想写一篇关于保护区边缘效应的论文，投 Biodiversity and Conservation。帮我评估一下这个数据能写什么。",
+    "expected": "触发 data-type-routing → camera-trap → manuscript-potential-rubric → 方向选择 → 输出 manuscript potential grade + 可行方向列表"
+  },
+  {
+    "id": 2,
+    "prompt": "帮我检查这篇 acoustic monitoring 的草稿。文章声称 AI 分类器可以替代人工监听，但只报告了 point estimates 没有置信区间。看看还有什么问题。",
+    "expected": "触发 existing-draft-repair → claim-boundaries → statistical-delivery-gate → acoustic method completeness → 输出 conclusion-strength audit + overclaim 检测"
+  },
+  {
+    "id": 3,
+    "prompt": "我有一组植物群落样方数据（50个样方，物种多度+功能性状+环境变量），还没有明确的研究问题。能帮我看看能写什么类型的文章吗？",
+    "expected": "触发 data-type-routing → plant-vegetation → question-method-map → deliverable-pathways → 输出候选研究问题 + 对应的 deliverable type"
+  }
+]

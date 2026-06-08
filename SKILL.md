@@ -1,6 +1,6 @@
 ---
 name: ecology-manuscript-builder
-description: Build reviewable, realistically scoped manuscript draft and pre-submission review packages from ecology and biodiversity datasets. Use when turning camera-trap, acoustic, transect, vegetation-survey, mark-recapture, occupancy, species distribution, habitat, remote-sensing, eDNA, patrol, threat, or multi-source ecological data into manuscript potential grades, feasible writing directions, deep-research plans, readiness reports, information-gap lists, argument and terminology contracts, method-completeness audits, section-length budgets, result cards, IMRAD drafts, data-availability/source-data checks, conclusion-strength checks, sensitive-data security checks, layout QA, revision loops, and AI-use disclosure.
+description: Build reviewable, realistically scoped manuscript packages from ecology and biodiversity datasets. Covers 19+ data types (camera-trap, acoustic, transect, vegetation, mark-recapture, occupancy, eDNA, remote-sensing, and more — see data-type-routing.md). Use when assessing data readiness, selecting article directions, conducting deep research, drafting IMRAD sections, creating evidence-linked figures, running pre-submission QA, or assembling journal packages.
 metadata:
   hermes:
     aliases: [wildlife-manuscript-builder]
@@ -39,7 +39,7 @@ Do not try to force weak data into a high-quality paper. Match the manuscript am
 6. Build a pre-submission information-gap list with `references/pre-submission-review-gates.md`; keep missing metadata and author tasks out of the formal manuscript body whenever possible.
 7. If the user provides an existing manuscript, notes, appendices, protocol, or review comments, run `references/author-knowledge-integration.md` to adopt factual material, verify uncertain items, narrow overclaims, and exclude unsupported content.
 
-> **🔴 Gate 1: Data Contract Freeze** — If counts, variable definitions, or model outputs conflict and cannot be reconciled, BLOCK. Output a data-contract issue list and the smallest defensible deliverable. Do not draft a standard manuscript.
+> **🔴 CHECKPOINT · 🛑 STOP — Gate 1: Data Contract Freeze** — If counts, variable definitions, or model outputs conflict and cannot be reconciled, BLOCK. Output a data-contract issue list and the smallest defensible deliverable. Do not draft a standard manuscript.
 
 8. Grade manuscript potential with `references/manuscript-potential-rubric.md`; optionally use `scripts/score_manuscript_potential.py`.
 9. Choose a deliverable path from `references/deliverable-pathways.md`: low, medium, or high potential.
@@ -52,7 +52,7 @@ Do not try to force weak data into a high-quality paper. Match the manuscript am
 12. Use deep research to evaluate the selected direction with `references/deep-literature-standard.md`: nearest literature, what has already been answered, what remains unanswered, target venues, method boundaries, and whether the dataset can add a defensible contribution. For a standard research article, target at least 30 verified sources before full drafting.
 13. Run `references/answerable-unanswered-question.md`.
 
-> **🔴 Gate 2: Answerable Question** — **PROCEED** if a specific, under-answered question is identified and the data can answer it. **REFINE** if the gap exists but the method boundary is fuzzy — narrow the question scope and re-evaluate. **DOWNGRADE** if no answerable question exists — produce a monitoring baseline, data note, local report, or methods note instead.
+> **🔴 CHECKPOINT · 🛑 STOP — Gate 2: Answerable Question** — **PROCEED** if a specific, under-answered question is identified and the data can answer it. **REFINE** if the gap exists but the method boundary is fuzzy — narrow the question scope and re-evaluate. **DOWNGRADE** if no answerable question exists — produce a monitoring baseline, data note, local report, or methods note instead.
 
 14. Build an argument and terminology contract with `references/argument-terminology-contract.md`: one-sentence argument, reader promise, paragraph jobs, and canonical terms.
 
@@ -63,7 +63,7 @@ Do not try to force weak data into a high-quality paper. Match the manuscript am
 16. Run `references/statistical-delivery-gate.md` to decide whether central analyses are ready, usable with caveat, need more analysis, or should be removed.
 17. For acoustic/automated-recognition manuscripts, run the method-completeness gate in `references/pre-submission-review-gates.md` and optionally `scripts/check_acoustic_method_completeness.py` on the draft.
 
-> **🔴 Gate 3: Statistical Delivery** — **PROCEED** if central results are "ready" or "usable with caveat". **REFINE** if results "need analysis" — run additional analysis before drafting. **BLOCK** if results are "not usable" — output a readiness report, do not draft Results.
+> **🔴 CHECKPOINT · 🛑 STOP — Gate 3: Statistical Delivery** — **PROCEED** if central results are "ready" or "usable with caveat". **REFINE** if results "need analysis" — run additional analysis before drafting. **BLOCK** if results are "not usable" — output a readiness report, do not draft Results.
 
 18. Build result cards before drafting Results. Use `references/result-card-template.md` or `scripts/build_result_cards.py`.
 19. Build a literature matrix and citation plan before drafting Introduction or Discussion; the matrix must assign sources to Introduction, Methods, Discussion, regional context, and software/data functions.
@@ -77,7 +77,7 @@ Do not try to force weak data into a high-quality paper. Match the manuscript am
 23. Run `references/discussion-conclusion-quality-gate.md` and re-run `references/section-length-quality-gate.md`.
 24. Run conclusion-strength and statistical-enhancement checks with `references/pre-submission-review-gates.md`, `scripts/check_conclusion_strength.py`, and `scripts/check_statistical_enhancements.py`; narrow strong claims that lack direct support.
 
-> **🔴 Gate 4: Conclusion Strength** — **PROCEED** if all strong claims have direct support. **REFINE** if claims need narrowing or caveats. **BLOCK** if strong unsupported claims remain — revise before reviewer simulation.
+> **🔴 CHECKPOINT · 🛑 STOP — Gate 4: Conclusion Strength** — **PROCEED** if all strong claims have direct support. **REFINE** if claims need narrowing or caveats. **BLOCK** if strong unsupported claims remain — revise before reviewer simulation.
 
 25. Run `references/figure-table-assembly.md` to ensure central figures/tables, captions, supplements, and sensitive-data handling are ready.
 26. Run `references/data-availability-source-data.md` to map datasets, figure source data, code, repositories/access routes, FAIR metadata, and sensitive-data restrictions.
@@ -91,7 +91,7 @@ Do not try to force weak data into a high-quality paper. Match the manuscript am
 30. Run citation coverage with `references/citation-coverage-check.md` and optionally `scripts/check_citation_coverage.py --min-references 30`; run `references/reference-verification.md` for DOI/title/year/source checks; run claim-ledger coverage with `scripts/check_claim_ledger.py`; run process-language and overclaim checks with `scripts/check_manuscript_language.py`.
 31. Finish with `references/delivery-readiness-score.md`, `references/journal-package-checklist.md`, optionally `scripts/check_delivery_readiness.py <package_dir>`, and an AI-use statement from `assets/ai-use-statement-template.md`.
 
-> **🔴 Gate 5: Delivery Readiness** — Assign Level 1-4. Do not call a manuscript submission-ready unless all Level 4 requirements are confirmed. If serious reviewer objections remain unaddressed, loop back to Phase E.
+> **🔴 CHECKPOINT · 🛑 STOP — Gate 5: Delivery Readiness** — Assign Level 1-4. Do not call a manuscript submission-ready unless all Level 4 requirements are confirmed. If serious reviewer objections remain unaddressed, loop back to Phase E.
 
 ## Minimum Input Contract
 
@@ -134,6 +134,36 @@ Classify the package before choosing methods:
 When uncertain, choose the more conservative route and state what would be needed for stronger inference.
 
 ## Stage Gates
+
+### Failure Mode Fallbacks
+
+对于最高频的 3 个失败场景，以下是显式三段式恢复路径：
+
+#### 场景 1：数据合同无法冻结（Gate 1 失败）
+
+| 阶段 | 触发条件 | 动作 |
+|------|---------|------|
+| 🔍 一线修复 | counts 冲突、变量定义不一致 | 回查原始数据源 → 与用户确认计数规则 → 重建 data contract |
+| 🔧 仍失败 | 修复后仍然无法调和 conflicts | 输出 data-contract issue list → 降级 deliverable 为 internal scientific draft 或 data note |
+| 🆘 兜底 | 用户无法提供缺失元数据 | 标注 manuscript 为 "method-validation draft"，不提交为 research article |
+
+#### 场景 2：找不到可回答的问题（Gate 2 失败）
+
+| 阶段 | 触发条件 | 动作 |
+|------|---------|------|
+| 🔍 一线修复 | 研究空白存在但方法边界模糊 | 缩小问题范围 → 用更保守的方法框架 → 重新评估 answerable-unanswered-question |
+| 🔧 仍失败 | 窄化后仍无法定义可回答的问题 | DOWNGRADE → 产出 monitoring baseline / data note / local report / methods note |
+| 🆘 兜底 | 文献深度不足以支撑任何方向 | 输出 literature-acquisition task list → 暂停 drafting，等待用户补充文献 |
+
+#### 场景 3：统计交付不通过（Gate 3 失败）
+
+| 阶段 | 触发条件 | 动作 |
+|------|---------|------|
+| 🔍 一线修复 | 结果 "needs analysis"（模型诊断未通过/敏感性未检查） | 运行额外分析：诊断图、敏感性检查、备选模型 → 重新评估 |
+| 🔧 仍失败 | 修复后效果仍"not usable" | 移除该结果为 central claim → 窄化 manuscript scope → 标注为 caveat |
+| 🆘 兜底 | 所有 central results 均不可用 | BLOCK — 输出 readiness report + revision task list，不 draft Results |
+
+### Gate Definitions
 
 ### Gate 0: Permission and Sensitivity
 
@@ -381,53 +411,68 @@ Assign a final delivery level with `references/delivery-readiness-score.md`:
 
 Do not call a manuscript submission-ready unless all Level 4 requirements are confirmed.
 
-## Hard Rules
+## 反例与黑名单 (Anti-Patterns & Blacklist)
+
+以下是本 skill 禁止的行为。按主题分组：
+
+### 数据类（Data）
 
 - Do not draft Results without result cards.
 - Do not draft a standard manuscript when key data facts are unresolved in the data contract.
-- Do not draft full prose before the one-sentence argument can state the bounded claim, evidence, and boundary.
 - Do not use a number, variable definition, model estimate, or spatial/detection claim that cannot be traced to the data contract, result cards, or verified citations.
-- Do not let recurring terms drift across sections; use the terminology ledger for species, gradients, metrics, models, units, and abbreviations.
 - Do not invent sampling design, survey effort, coordinates, species names, permits, ethics approval, funding, or conflicts.
-- Do not invent authorship, affiliations, funding, permits, ethics, author contributions, conflicts, or data authorization.
 - Do not ignore author-provided factual material when the goal is a deliverable manuscript; classify it as adopt, verify, narrow, or exclude.
-- Do not format a manuscript as generic IMRAD when a journal target contract exists.
-- Do not add a table of contents to a manuscript/article DOCX unless the user explicitly asks or the journal target contract requires it.
 - Do not treat detection rate, photo rate, or encounter rate as density.
 - Do not treat habitat suitability as confirmed presence.
+
+### 推断类（Inference）
+
+- Do not draft full prose before the one-sentence argument can state the bounded claim, evidence, and boundary.
 - Do not infer causal management effectiveness from before-after data without a defensible design.
 - Do not convert co-occurrence into species interaction without scale-aware evidence.
-- Do not expose sensitive species coordinates or patrol-sensitive locations.
-- Do not include AI-generated or unverified citations.
-- Do not provide a reference list without corresponding in-text citations and a citation coverage check.
-- Do not treat citation coverage as reference verification; DOI/title/year/source checks are still required for journal-format or submission-ready packages.
-- Do not draft a standard research article from shallow literature coverage; target at least 30 verified relevant sources or downgrade the deliverable.
-- Do not write an Introduction without an explicit specific gap, operational definitions for core variables, and objectives that map to methods.
-- Do not expand an Introduction or Discussion merely to reach a word count; expand only to add a missing writing function, verified literature comparison, claim boundary, or result-linked interpretation.
-- Do not leave an unusually short or long Introduction, Discussion, or Conclusion unexplained when preparing a reviewable, journal-format, or submission-ready draft.
-- Do not leave "protected-area edge gradient", "human RAI", "site-scale diversity", or "two-dimensional gradient" undefined.
-- Do not use internal workflow/process language in formal manuscript sections.
-- Do not scatter unresolved placeholders through the main scientific narrative; put them in a pre-submission information gap list unless they are needed as transparent caveats.
-- Do not discuss central results without returning to effect direction, effect size or estimate, and uncertainty where available.
-- Do not report classification/recognition metrics as final journal-format results without denominators and uncertainty, or an explicit statistical-enhancement task explaining why uncertainty is not available.
 - Do not interpret non-significant human RAI as no ecological effect.
 - Do not write HMSC, occupancy, or detection/non-detection results as true distribution, density, habitat preference, avoidance, or causal response unless the model and design support it.
 - Do not claim a passive recorder or machine model "replaces" field listening, human monitoring, or traditional methods unless the data directly compare those methods at the same inferential target.
 - Do not call a fixed sampling window optimal or complete unless outside-window data or strong independent citations support that claim.
-- Do not call an automated-recognition manuscript journal-format if model identity, training data, threshold, post-processing, event definition, and matching rules are missing.
 - Do not call centroid or ordination clusters core habitat, refuge, long-term use space, or home range unless independently supported.
 - Do not keep major manuscript claims outside the claim ledger.
+- Do not continue deep drafting if the best deliverable is a monitoring note, report, or data paper; state that path plainly.
+- Do not inflate a low-potential dataset into a high-claim manuscript.
+- Do not hide low sample size, weak design, unbalanced effort, or outdated topic positioning behind polished language.
+- When evidence is insufficient, output a readiness report and revision tasks instead of a manuscript.
+
+### 写作与术语类（Writing & Terminology）
+
+- Do not let recurring terms drift across sections; use the terminology ledger for species, gradients, metrics, models, units, and abbreviations.
+- Do not draft a standard research article from shallow literature coverage; target at least 30 verified relevant sources or downgrade the deliverable.
+- Do not write an Introduction without an explicit specific gap, operational definitions for core variables, and objectives that map to methods.
+- Do not expand an Introduction or Discussion merely to reach a word count; expand only to add a missing writing function, verified literature comparison, claim boundary, or result-linked interpretation.
+- Do not leave an unusually short or long Introduction, Discussion, or Conclusion unexplained when preparing a reviewable, journal-format, or submission-ready draft.
+- Do not use internal workflow/process language in formal manuscript sections.
+- Do not scatter unresolved placeholders through the main scientific narrative; put them in a pre-submission information gap list unless they are needed as transparent caveats.
+- Do not discuss central results without returning to effect direction, effect size or estimate, and uncertainty where available.
+
+### 格式与提交类（Format & Submission）
+
+- Do not format a manuscript as generic IMRAD when a journal target contract exists.
+- Do not add a table of contents to a manuscript/article DOCX unless the user explicitly asks or the journal target contract requires it.
+- Do not provide a reference list without corresponding in-text citations and a citation coverage check.
+- Do not treat citation coverage as reference verification; DOI/title/year/source checks are still required for journal-format or submission-ready packages.
+- Do not include AI-generated or unverified citations.
+- Do not report classification/recognition metrics as final journal-format results without denominators and uncertainty, or an explicit statistical-enhancement task explaining why uncertainty is not available.
 - Do not call a text-only draft "journal-format" if central figures/tables, captions, and supplements are only planned.
 - Do not call a draft journal-format if central figure/table source data, data/code availability routes, or sensitive-data restrictions are unmapped.
 - Do not call a DOCX journal-format until layout QA confirms figures are embedded, captions are attached, tables are readable, no accidental TOC exists, and unresolved placeholders are removed or intentionally retained for review.
-- Do not publish exact coordinates or raw point files for sensitive species without explicit authorization and masking/generalization.
 - Do not call a journal-format draft "submission-ready" while metadata, permissions, sensitive-location policy, reference verification, or figure/table assembly remain unresolved.
 - Do not finalize a draft while serious reviewer objections remain unaddressed and undisclosed.
 - Do not proceed with a research-article framing when deep research cannot identify a specific answerable unanswered question.
-- Do not inflate a low-potential dataset into a high-claim manuscript.
-- Do not hide low sample size, weak design, unbalanced effort, or outdated topic positioning behind polished language.
-- Do not continue deep drafting if the best deliverable is a monitoring note, report, or data paper; state that path plainly.
-- When evidence is insufficient, output a readiness report and revision tasks instead of a manuscript.
+
+### 安全与伦理类（Security & Ethics）
+
+- Do not expose sensitive species coordinates or patrol-sensitive locations.
+- Do not publish exact coordinates or raw point files for sensitive species without explicit authorization and masking/generalization.
+- Do not invent authorship, affiliations, funding, permits, ethics, author contributions, conflicts, or data authorization.
+- Do not call an automated-recognition manuscript journal-format if model identity, training data, threshold, post-processing, event definition, and matching rules are missing.
 
 ## Bundled Resources
 
