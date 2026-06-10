@@ -1,9 +1,9 @@
 ---
-name: ecology-manuscript-builder
+name: wildlife-manuscript-builder
 description: Build reviewable, realistically scoped manuscript packages from ecology and biodiversity datasets. Covers 19+ data types (camera-trap, acoustic, transect, vegetation, mark-recapture, occupancy, eDNA, remote-sensing, and more — see data-type-routing.md). Use when assessing data readiness, selecting article directions, conducting deep research, drafting IMRAD sections, creating evidence-linked figures, running pre-submission QA, or assembling journal packages.
 metadata:
   hermes:
-    aliases: [wildlife-manuscript-builder]
+    aliases: [ecology-manuscript-builder]
     tags: [ecology, biodiversity, manuscript, research-writing, conservation, data-analysis]
     related_skills: [goal-driven-research-system, academic-paper, deep-research]
 ---
@@ -17,6 +17,40 @@ Build a reviewable and deliverable manuscript draft package, not an automatic pu
 Final prose can be polished, but the primary deliverable is the evidence chain: readiness report, journal target contract, section length quality gate, submission metadata contract, data contract, author-knowledge integration, information-gap list, research question map, answerable-unanswered-question check, argument and terminology contract, analysis plan, statistical delivery gate, result cards, figure/table assembly, deep literature matrix, introduction quality gate, claim ledger, discussion/conclusion quality gate, conclusion-strength audit, method-completeness audit, statistical enhancement list, data-availability/source-data gate, sensitive-data security check, layout QA, reviewer-objection simulation, citation coverage check, reference verification, manuscript draft, delivery readiness score, integrity checklist, AI-use statement, and revision tasks.
 
 Do not try to force weak data into a high-quality paper. Match the manuscript ambition to the actual carrying capacity of the data, topic novelty, methods, and literature position.
+
+## When Rewriting an Existing Manuscript
+
+When the user provides a complete or partial draft (IMRAD, DOCX, Rmd + data) and asks for a rewrite rather than a from-scratch build, adapt the pipeline:
+
+**Phase A–C: Fast-pass the contracts, but NEVER skip deep research.** Data, direction, and research questions may already be decided, but the literature must still be verified and expanded. Build data contract, author-knowledge integration, and terminology ledger quickly (1-2 turns per phase). However, deep research (Phase C Step 12) is MANDATORY even for rewrites — it serves two purposes: (a) verify the existing reference list is real and sufficient (≥30 verified sources), and (b) find 5-10 additional papers that strengthen the Discussion's literature comparisons. The user expects a rewrite to be BETTER than the original — richer literature integration is how you deliver that. Skipping deep research produces an underweight manuscript (~5,000 chars) that reads like a light edit rather than a thorough rewrite. Target output: 8,000-12,000+ Chinese characters for a standard ecology research article, with at least 40-50 verified references and every Discussion subsection citing 3-5 papers.
+
+**Phase D: Statistical delivery gate is the anchor.** This is where rewrites diverge most from new builds. You are reviewing an analysis someone else (or a prior version) already ran, not running it yourself. Read the analysis code (Rmd, .R, .py) and audit it against `references/statistical-delivery-gate.md` without re-executing. Identify: missing diagnostics (residual plots, convergence reports, overdispersion checks), unexamined assumptions (sensitivity of binary classifications, spatial autocorrelation), under-powered tests, and results that don't match the prose claims. Output the delivery gate report as the central quality document. Do NOT re-implement the analysis unless Gate 3 forces a REFINE.
+
+**Phase E: Claim narrowing is the core rewrite activity.** The most common failure mode in existing drafts is overclaiming. Build the claim ledger (`references/claim-ledger.md`) by scanning the Discussion/Conclusion for every strong claim, then trace each one back to the statistical delivery gate and result cards. The "Removed or Narrowed Claims" table in the ledger is the single most important rewrite deliverable. Common narrowing patterns:
+- Qualitative labels → descriptive comparisons: "硬边界/软边界" → "道路边界相似性最低且波动小(bc=0.32, range 0.22–0.44)，村庄边界变异极大(bc=0.03–0.61)"
+- Causal → associative: "导致/造成/决定" → "与……相关/……存在差异"
+- Non-significant → explicit null: "呈连续梯度" → "未检测到位次与群落指标的显著关联(all p>0.1)"
+- Management implication without evidence → hypothesis: "应扩大缓冲带" → "可能有助于……但需大样本验证"
+
+Then draft in IMRAD order (Methods → Results → Discussion → Introduction → Abstract → Title), running Introduction quality gate (Gate 7.5) and Discussion quality gate (Gate 8.2) against the new prose. Keep the earlier quality documents (data contract, statistical gate, claim ledger) as the evidence chain — the prose is the polished surface, not the primary deliverable.
+
+**Phase F: Same as new build.** Reviewer simulation, citation coverage, delivery readiness score. The main difference: the deep literature matrix step is skipped (or done lightly) since the existing draft already has a reference list. Focus on verifying existing citations rather than finding new ones, unless the reviewer simulation reveals a critical gap.
+
+**Pitfall:** Do not treat the existing draft as ground truth. The author-knowledge integration step (Gate 1.7) classifies every claim as adopt/verify/narrow/exclude — do not skip this just because the draft "looks complete." The statistical delivery gate often reveals that the draft's prose claims are stronger than what the analysis actually supports.
+
+**Pitfall — Chinese manuscript length:** The `check_section_lengths.py` script and `section-length-quality-gate.md` reference are calibrated for English manuscripts (6,000-9,000 word budgets). They cannot detect Chinese section headers (引言/讨论/结论) and will report "section not detected." For Chinese ecology research articles, target 8,000-12,000+ Chinese characters (汉字) for the main text, with Introduction ~1,500-2,500 chars, Discussion ~3,000-5,000 chars, Conclusion ~500-800 chars. A 5,000-char Chinese manuscript is too short — it signals shallow literature integration and insufficient discussion depth.
+
+**Pitfall — Automated checker false negatives on Chinese:** The quality gate scripts (`check_acoustic_method_completeness.py`, `check_conclusion_strength.py`, etc.) use English-targeted regex that cannot parse Chinese numbers, phrases, or inline model names. Always manually verify checker-reported gaps against the manuscript text before reporting them as real issues. See `references/rewriting-existing-manuscript.md` for details.
+
+**Pitfall — Reference list must stay synchronized with inline citations during deep research integration:** When you add inline citations to Discussion/Introduction from deep research (Phase C Step 12), you MUST simultaneously add those references to the reference list section. Do NOT add citations to body paragraphs first and plan to "add them to the reference list later." The reference list count should always match the inline citation count. After every round of Discussion paragraph enrichment, re-count the references and verify every cited paper appears in the reference list. The most common failure mode: Crossref/Elicit search → integrate 10 new citations into body text → forget to append them to the reference list → user asks "why are there only 27 references when you said 42?" → embarrassing fix session.
+
+**Pitfall — Elicit API integration:** When `web_search` is unavailable, prefer the Elicit API (`https://elicit.com/api/v1/search` — NOT `api.elicit.com`) over Crossref for ecology deep research because Elicit returns far more targeted results. API key: read from `ELICIT_API_KEY` in the Hermes `.env` file. The API requires a browser-like `User-Agent` header to bypass Cloudflare protection. In Python's `urllib`, you must also remove `http_proxy`/`https_proxy` env vars before making the call (some proxies trigger 403 Cloudflare blocks). Full integration recipe in `references/literature-search-fallback.md`. When `web_search` is unavailable and `browser_navigate` hits CAPTCHAs on Google Scholar, use the Crossref REST API via terminal curl. It has generous rate limits without authentication for most queries:
+```
+curl -s "https://api.crossref.org/works?query=KEYWORDS&rows=10&filter=type:journal-article" | python -c "import sys,json; ..."
+```
+Pipe through `python -c` with `json.load(sys.stdin)` to extract title, year, DOI, journal, and authors. Semantic Scholar API works too but hits 429 rate limits faster. Crossref returns up-to-date metadata including DOIs. Also try the Hainan gibbon canopy bridge paper (Chan et al. 2020, DOI:10.1038/s41598-020-72641-z) and Gregory et al. 2017 (DOI:10.1038/s41598-017-04112-x) as canonical references for gibbon canopy connectivity.
+
+For the full rewriting workflow, see `references/rewriting-existing-manuscript.md`.
 
 ## Pipeline: 31 Steps / 6 Phases
 
@@ -501,6 +535,8 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - `references/discussion-conclusion-quality-gate.md`: require effect-size back-references, cautious wording, concise conclusions.
 - `references/reviewer-objection-simulator.md`: stress-test novelty, methods, evidence strength, variables, limitations, journal fit.
 - `references/revision-loop.md`: evaluate, author-decide, and revise without over-inflating claims.
+- `references/rewriting-existing-manuscript.md` *(new)*: full adaptation of the 31-step pipeline for rewriting an existing manuscript rather than building from scratch — fast-pass Phase A-C, anchor on statistical gate audit (Phase D), claim narrowing as the core rewrite activity (Phase E).
+- `references/literature-search-fallback.md` *(new)*: when web_search is unavailable and browser hits CAPTCHAs, use Crossref/Semantic Scholar REST APIs via terminal curl for deep research literature discovery.
 - `references/domain/method-checks/arrive.md`: ARRIVE 2.0 reporting guidelines for animal research, mapped to ecology skill gates.
 - `references/domain/interpretation/evidence-quality.md`: evidence quality assessment framework adapted from GRADE for ecological studies.
 - `references/domain/language/ecology.md`: terminology and language guide for ecology and biodiversity writing.
