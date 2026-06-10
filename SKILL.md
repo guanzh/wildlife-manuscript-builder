@@ -114,6 +114,7 @@ For the full rewriting workflow, see `references/rewriting-existing-manuscript.m
 > **🔴 CHECKPOINT · 🛑 STOP — Gate 4: Conclusion Strength** — **PROCEED** if all strong claims have direct support. **REFINE** if claims need narrowing or caveats. **BLOCK** if strong unsupported claims remain — revise before reviewer simulation.
 
 25. Run `references/figure-table-assembly.md` to ensure central figures/tables, captions, supplements, and sensitive-data handling are ready.
+25.5. Run figure-claim trace with `references/figure-claim-trace.md`: for each central figure/table, extract the caption claim and verify it traces back to (a) the corresponding result card, (b) the statistical delivery gate verdict, and (c) the claim ledger. Flag any caption that is stronger than the statistical evidence, contradicts the result card, or is missing from the claim ledger.
 26. Run `references/data-availability-source-data.md` to map datasets, figure source data, code, repositories/access routes, FAIR metadata, and sensitive-data restrictions.
 27. For DOCX/journal-format outputs, run layout QA with `scripts/check_docx_layout_qa.py`; for sensitive species, run `scripts/check_sensitive_data_security.py`.
 28. Run the improvement loop from `references/revision-loop.md`.
@@ -408,6 +409,18 @@ Main figures/tables must be present, attached, or explicitly marked as blocked. 
 
 For DOCX outputs, also run `scripts/check_docx_layout_qa.py` or manually verify title duplication, table breaks, caption placement, figure readability, Chinese punctuation, unresolved placeholders, image embedding, table of contents absence, and sensitive-map masking.
 
+### Gate 8.72: Figure-Claim Trace
+
+Before calling a manuscript journal-format or submission-ready, run `references/figure-claim-trace.md`.
+
+Required output:
+
+- One row per central figure/table: caption claim, source result card, statistical gate verdict, claim-ledger entry.
+- Mismatch flags: caption stronger than statistics, caption contradicts result card, caption missing from claim ledger, figure data not in source-data map.
+- Resolution: narrow caption, add caveat, remove figure, or document as accepted risk.
+
+If a caption asserts a causal or management-implication claim that the statistical delivery gate marks as "needs analysis" or "not usable", the figure must not appear as a central claim figure in a journal-format or submission-ready manuscript.
+
 ### Gate 8.75: Data Availability and Source Data
 
 Before calling a manuscript journal-format or submission-ready, run `references/data-availability-source-data.md`.
@@ -495,6 +508,7 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - Do not include AI-generated or unverified citations.
 - Do not report classification/recognition metrics as final journal-format results without denominators and uncertainty, or an explicit statistical-enhancement task explaining why uncertainty is not available.
 - Do not call a text-only draft "journal-format" if central figures/tables, captions, and supplements are only planned.
+- Do not call a draft journal-format if a central figure caption asserts a claim stronger than the statistical delivery gate supports and the mismatch is not disclosed as a caveat.
 - Do not call a draft journal-format if central figure/table source data, data/code availability routes, or sensitive-data restrictions are unmapped.
 - Do not call a DOCX journal-format until layout QA confirms figures are embedded, captions are attached, tables are readable, no accidental TOC exists, and unresolved placeholders are removed or intentionally retained for review.
 - Do not call a journal-format draft "submission-ready" while metadata, permissions, sensitive-location policy, reference verification, or figure/table assembly remain unresolved.
@@ -527,6 +541,7 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - `references/statistical-delivery-gate.md`: audit model diagnostics, effort handling, sensitivity checks, result readiness.
 - `references/result-card-template.md`: reusable result-card and literature-matrix templates.
 - `references/figure-table-assembly.md`: assemble main figures/tables, captions, supplements, and sensitive-data checks for delivery.
+- `references/figure-claim-trace.md`: verify every central figure/table caption traces back to result cards, statistical gate verdict, and claim ledger.
 - `references/data-availability-source-data.md`: map datasets, source data, code, repository/access routes, FAIR metadata.
 - `references/introduction-quality-gate.md`: sharpen research gap, define core concepts, remove process language.
 - `references/claim-ledger.md`: map every manuscript claim to data, results, literature, assumptions, caveats.
