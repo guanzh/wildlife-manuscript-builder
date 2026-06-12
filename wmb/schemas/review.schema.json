@@ -25,7 +25,10 @@
       "minLength": 1
     },
     "findings": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     },
     "verdict": {
       "type": "string",
@@ -37,6 +40,21 @@
         "REFINE",
         "DOWNGRADE",
         "BLOCK"
+      ]
+    }
+  },
+  "$defs": {
+    "trace_item": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        }
       ]
     }
   },

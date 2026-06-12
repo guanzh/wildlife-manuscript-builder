@@ -56,8 +56,12 @@
       "minimum": 1
     },
     "status": {
-      "type": "string",
-      "minLength": 1
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed"
+      ]
     }
   },
   "additionalProperties": true

@@ -4,12 +4,31 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
+
+_DATE_TIME_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})"
+)
+
+
+def _is_date_time(value: object) -> bool:
+    if not isinstance(value, str) or not _DATE_TIME_PATTERN.fullmatch(value):
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError:
+        return False
+    return True
+
+
+if "date-time" not in Draft202012Validator.FORMAT_CHECKER.checkers:
+    Draft202012Validator.FORMAT_CHECKER.checks("date-time")(_is_date_time)
 
 
 class ContractError(ValueError):
@@ -33,7 +52,10 @@ def _validator(kind: str) -> Draft202012Validator:
         Draft202012Validator.check_schema(schema)
     except SchemaError as exc:
         raise ContractError(kind, [("<schema>", exc.message)]) from exc
-    return Draft202012Validator(schema)
+    return Draft202012Validator(
+        schema,
+        format_checker=Draft202012Validator.FORMAT_CHECKER,
+    )
 
 
 def _field_path(error: ValidationError) -> str:

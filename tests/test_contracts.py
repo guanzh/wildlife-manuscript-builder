@@ -89,3 +89,44 @@ def test_invalid_task_contract_reports_sorted_field_paths():
 def test_unknown_contract_kind_raises_contract_error():
     with pytest.raises(ContractError, match="unknown contract kind"):
         validate_contract("missing", {})
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [
+        ("run", "invented_run_status"),
+        ("task", "invented_task_status"),
+    ],
+)
+def test_contract_rejects_unknown_canonical_status(kind, status):
+    payload = {**VALID_CONTRACTS[kind], "status": status}
+
+    with pytest.raises(ContractError, match="status"):
+        validate_contract(kind, payload)
+
+
+def test_event_rejects_malformed_timestamp():
+    payload = {**VALID_CONTRACTS["event"], "timestamp": "not-a-timestamp"}
+
+    with pytest.raises(ContractError, match="timestamp"):
+        validate_contract("event", payload)
+
+
+@pytest.mark.parametrize(
+    ("kind", "field", "entry"),
+    [
+        ("result", "findings", None),
+        ("result", "failures", 42),
+        ("analysis_run", "outputs", None),
+        ("analysis_run", "warnings", 42),
+        ("analysis_run", "errors", None),
+        ("analysis_run", "exclusions", 42),
+        ("analysis_run", "limitations", None),
+        ("review", "findings", 42),
+    ],
+)
+def test_trace_arrays_reject_meaningless_entries(kind, field, entry):
+    payload = {**VALID_CONTRACTS[kind], field: [entry]}
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract(kind, payload)

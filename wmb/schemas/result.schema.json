@@ -32,7 +32,10 @@
       }
     },
     "findings": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     },
     "unresolved_issues": {
       "type": "array"
@@ -55,13 +58,31 @@
       "type": "array"
     },
     "failures": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     },
     "exclusions": {
       "type": "array"
     },
     "skipped_work": {
       "type": "array"
+    }
+  },
+  "$defs": {
+    "trace_item": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        }
+      ]
     }
   },
   "additionalProperties": true

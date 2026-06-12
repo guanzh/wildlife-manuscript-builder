@@ -36,20 +36,47 @@
     "outputs": {
       "type": "array",
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/trace_item"
       }
     },
     "warnings": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     },
     "errors": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     },
     "exclusions": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     },
     "limitations": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
+    }
+  },
+  "$defs": {
+    "trace_item": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": true
+        }
+      ]
     }
   },
   "additionalProperties": true
