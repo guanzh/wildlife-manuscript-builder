@@ -1,4 +1,5 @@
 import errno
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
@@ -73,9 +74,23 @@ def test_initialize_project_is_idempotent_and_preserves_existing_records(
             "current_gate: author_confirmation\n"
             "delivery_level: 2\n"
         ),
-        project.author_confirmation_queue_file: "items:\n  - existing: author\n",
-        project.journal_contract_file: "journal_name: Existing Journal\n",
-        project.events_log: '{"event_id": "existing"}\n',
+        project.author_confirmation_queue_file: (
+            "author:\n"
+            "  display_name: Existing Author\n"
+            "  status: confirmed\n"
+            "items: []\n"
+        ),
+        project.journal_contract_file: (
+            "journal_name: Existing Journal\n"
+            "main_language: en-US\n"
+            "bilingual_elements: []\n"
+            "source_url: https://example.org/guidelines\n"
+        ),
+        project.events_log: (
+            '{"event_id":"existing","timestamp":"2026-06-12T09:00:00Z",'
+            '"actor":"orchestrator","event_type":"transition",'
+            '"from_status":"intake","to_status":"blocked","reason":"existing"}\n'
+        ),
         project.rejections_log: '{"record_id": "existing"}\n',
     }
     for path, content in records.items():
@@ -188,13 +203,18 @@ def test_initialize_project_falls_back_when_hard_links_are_unsupported(
 
     project = initialize_project(tmp_path)
     original_run = project.run_file.read_text(encoding="utf-8")
-    project.events_log.write_text("existing event\n", encoding="utf-8")
+    existing_event = (
+        '{"event_id":"existing","timestamp":"2026-06-12T09:00:00Z",'
+        '"actor":"orchestrator","event_type":"transition",'
+        '"from_status":"intake","to_status":"blocked","reason":"existing"}\n'
+    )
+    project.events_log.write_text(existing_event, encoding="utf-8")
 
     initialize_project(tmp_path)
 
     validate_contract("run", _load_yaml(project.run_file))
     assert project.run_file.read_text(encoding="utf-8") == original_run
-    assert project.events_log.read_text(encoding="utf-8") == "existing event\n"
+    assert project.events_log.read_text(encoding="utf-8") == existing_event
 
 
 def test_initialize_project_does_not_require_hard_link_api(
@@ -283,3 +303,193 @@ def test_hard_link_fallback_never_publishes_partial_run(
             ).exception(timeout=1)
 
     assert second_error is None
+
+
+def test_fallback_exclusive_creation_preserves_concurrent_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    target = tmp_path / "record.yaml"
+    real_open = project_module.os.open
+    concurrent_content = "owner: concurrent\n"
+    injected = False
+
+    def race_open(path, flags, mode=0o777):
+        nonlocal injected
+        if Path(path) == target and flags & os.O_EXCL and not injected:
+            injected = True
+            target.write_text(concurrent_content, encoding="utf-8")
+        return real_open(path, flags, mode)
+
+    def unsupported_link(*_args, **_kwargs):
+        raise OSError(errno.ENOTSUP, "hard links unsupported")
+
+    monkeypatch.setattr(project_module.os, "link", unsupported_link)
+    monkeypatch.setattr(project_module.os, "open", race_open)
+
+    project_module._write_once(target, "owner: initializer\n")
+
+    assert injected
+    assert target.read_text(encoding="utf-8") == concurrent_content
+
+
+def test_fallback_write_failure_does_not_delete_replacement_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    target = tmp_path / "record.yaml"
+    concurrent_content = "owner: concurrent\n"
+    real_write_descriptor = project_module._write_descriptor
+    writes = 0
+
+    def unsupported_link(*_args, **_kwargs):
+        raise OSError(errno.ENOTSUP, "hard links unsupported")
+
+    def replace_then_fail(descriptor, content):
+        nonlocal writes
+        writes += 1
+        if writes == 1:
+            return real_write_descriptor(descriptor, content)
+        os.close(descriptor)
+        target.unlink()
+        target.write_text(concurrent_content, encoding="utf-8")
+        raise OSError("simulated target write failure")
+
+    monkeypatch.setattr(project_module.os, "link", unsupported_link)
+    monkeypatch.setattr(project_module, "_write_descriptor", replace_then_fail)
+
+    with pytest.raises(OSError, match="simulated target write failure"):
+        project_module._write_once(target, "owner: initializer\n")
+
+    assert target.read_text(encoding="utf-8") == concurrent_content
+
+
+def test_stale_fallback_lock_is_recovered_after_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run_file = tmp_path / ".wmb" / "run.yaml"
+    lock_file = project_module._publish_lock_path(run_file)
+    lock_file.parent.mkdir(parents=True)
+    lock_file.write_text('{"pid": 99999999, "created_at": 0}', encoding="utf-8")
+    os.utime(lock_file, (0, 0))
+    monkeypatch.setattr(project_module, "_PUBLISH_LOCK_STALE_SECONDS", 0.01)
+
+    project = initialize_project(tmp_path)
+
+    validate_contract("run", _load_yaml(project.run_file))
+    assert not lock_file.exists()
+
+
+def test_fresh_fallback_lock_without_target_is_not_stolen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run_file = tmp_path / ".wmb" / "run.yaml"
+    lock_file = project_module._publish_lock_path(run_file)
+    lock_file.parent.mkdir(parents=True)
+    content = '{"pid": 1, "token": "active"}'
+    lock_file.write_text(content, encoding="utf-8")
+    monkeypatch.setattr(project_module, "_PUBLISH_LOCK_ATTEMPTS", 1)
+    monkeypatch.setattr(project_module, "_PUBLISH_LOCK_STALE_SECONDS", 60.0)
+
+    with pytest.raises(TimeoutError):
+        initialize_project(tmp_path)
+
+    assert lock_file.read_text(encoding="utf-8") == content
+
+
+def test_completed_target_recovers_leftover_fallback_lock(tmp_path: Path):
+    project = initialize_project(tmp_path)
+    original = project.run_file.read_text(encoding="utf-8")
+    lock_file = project_module._publish_lock_path(project.run_file)
+    lock_file.write_text('{"pid": 99999999}', encoding="utf-8")
+
+    initialize_project(tmp_path)
+
+    assert project.run_file.read_text(encoding="utf-8") == original
+    assert not lock_file.exists()
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "author_confirmation_queue.yaml",
+        "journal_contract.yaml",
+        "logs/events.jsonl",
+        "logs/rejections.jsonl",
+    ],
+)
+def test_initialize_project_rejects_non_file_record_paths(
+    tmp_path: Path,
+    relative_path: str,
+):
+    record_path = tmp_path / ".wmb" / relative_path
+    record_path.mkdir(parents=True)
+
+    with pytest.raises(IsADirectoryError):
+        initialize_project(tmp_path)
+
+    assert record_path.is_dir()
+
+
+def test_initialize_project_rejects_non_directory_logs_path(tmp_path: Path):
+    logs_path = tmp_path / ".wmb" / "logs"
+    logs_path.parent.mkdir()
+    logs_path.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(NotADirectoryError):
+        initialize_project(tmp_path)
+
+    assert logs_path.read_text(encoding="utf-8") == "not a directory"
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "content", "error"),
+    [
+        ("author_confirmation_queue.yaml", "items: []\n", ValueError),
+        ("journal_contract.yaml", "journal_name: Existing Journal\n", ValueError),
+        ("logs/events.jsonl", '{"event_id":"existing"}\n', ContractError),
+        ("logs/rejections.jsonl", "[]\n", ValueError),
+    ],
+)
+def test_initialize_project_rejects_unusable_existing_records_without_overwrite(
+    tmp_path: Path,
+    relative_path: str,
+    content: str,
+    error: type[Exception],
+):
+    project = initialize_project(tmp_path)
+    record_path = project.wmb_dir / relative_path
+    record_path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(error):
+        initialize_project(tmp_path)
+
+    assert record_path.read_text(encoding="utf-8") == content
+
+
+@pytest.mark.parametrize("journal", ["", "   ", {}, {"journal_name": "   "}])
+def test_blank_journal_inputs_use_default_contract(tmp_path: Path, journal):
+    project = initialize_project(tmp_path, journal=journal)
+
+    assert _load_yaml(project.journal_contract_file) == {
+        "journal_name": "生物多样性",
+        "main_language": "zh-CN",
+        "bilingual_elements": ["title", "abstract", "keywords"],
+        "source_url": "https://www.biodiversity-science.net/CN/column/column49.shtml",
+    }
+
+
+@pytest.mark.parametrize(
+    "journal",
+    [
+        "Journal of Wildlife Management",
+        {"journal_name": "Journal of Wildlife Management"},
+    ],
+)
+def test_incomplete_journal_contract_is_rejected(tmp_path: Path, journal):
+    with pytest.raises(ValueError, match="journal"):
+        initialize_project(tmp_path, journal=journal)
+
+    assert not (tmp_path / ".wmb" / "journal_contract.yaml").exists()
