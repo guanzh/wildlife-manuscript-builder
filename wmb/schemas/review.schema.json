@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wildlife-manuscript-builder.local/schemas/review.schema.json",
+  "title": "WMB Review",
+  "type": "object",
+  "required": [
+    "review_id",
+    "status",
+    "review_of",
+    "findings",
+    "verdict",
+    "recommended_transition"
+  ],
+  "properties": {
+    "review_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "review_of": {
+      "type": "string",
+      "minLength": 1
+    },
+    "findings": {
+      "type": "array"
+    },
+    "verdict": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recommended_transition": {
+      "enum": [
+        "PROCEED",
+        "REFINE",
+        "DOWNGRADE",
+        "BLOCK"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wildlife-manuscript-builder.local/schemas/result.schema.json",
+  "title": "WMB Agent Result",
+  "type": "object",
+  "required": [
+    "task_id",
+    "status",
+    "artifacts",
+    "findings",
+    "unresolved_issues",
+    "recommended_transition",
+    "confidence",
+    "limitations",
+    "failures",
+    "exclusions",
+    "skipped_work"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "findings": {
+      "type": "array"
+    },
+    "unresolved_issues": {
+      "type": "array"
+    },
+    "recommended_transition": {
+      "enum": [
+        "PROCEED",
+        "REFINE",
+        "DOWNGRADE",
+        "BLOCK"
+      ]
+    },
+    "confidence": {
+      "type": [
+        "string",
+        "number"
+      ]
+    },
+    "limitations": {
+      "type": "array"
+    },
+    "failures": {
+      "type": "array"
+    },
+    "exclusions": {
+      "type": "array"
+    },
+    "skipped_work": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": true
+}

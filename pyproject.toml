@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wildlife-manuscript-builder"
+version = "0.1.0"
+description = "Executable multi-agent workflow for wildlife manuscripts"
+requires-python = ">=3.11"
+dependencies = [
+    "PyYAML>=6.0",
+    "jsonschema>=4.18",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+
+[project.scripts]
+wmb = "wmb.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["wmb*"]
+
+[tool.setuptools.package-data]
+wmb = ["schemas/*.json"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+pythonpath = ["."]

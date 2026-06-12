@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wildlife-manuscript-builder.local/schemas/run.schema.json",
+  "title": "WMB Run",
+  "type": "object",
+  "required": [
+    "run_id",
+    "status",
+    "current_gate",
+    "delivery_level"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "current_gate": {
+      "type": "string",
+      "minLength": 1
+    },
+    "delivery_level": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4
+    }
+  },
+  "additionalProperties": true
+}
