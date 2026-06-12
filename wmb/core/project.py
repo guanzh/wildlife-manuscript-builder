@@ -22,6 +22,11 @@ DEFAULT_JOURNAL_URL = (
 _PUBLISH_LOCK_ATTEMPTS = 1_000
 _PUBLISH_LOCK_DELAY_SECONDS = 0.001
 _PUBLISH_LOCK_STALE_SECONDS = 30.0
+_FINAL_VALIDATION_ATTEMPTS = 3
+
+
+class InitializationError(RuntimeError):
+    """Raised when initialization cannot produce a complete valid project."""
 
 
 def _publish_lock_path(path: Path) -> Path:
@@ -382,6 +387,59 @@ def _ensure_directory(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _project_records(project: ProjectPaths):
+    return (
+        (project.run_file, _validate_run_file),
+        (project.author_confirmation_queue_file, _validate_author_file),
+        (project.journal_contract_file, _validate_journal_file),
+        (
+            project.events_log,
+            lambda path: _validate_jsonl_file(path, "event"),
+        ),
+        (project.rejections_log, _validate_jsonl_file),
+    )
+
+
+def _record_signature(path: Path) -> tuple[int, int, int, int] | None:
+    try:
+        stat = path.stat(follow_symlinks=False)
+    except (FileNotFoundError, PermissionError):
+        return None
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def _require_complete_project(project: ProjectPaths) -> None:
+    records = _project_records(project)
+    for attempt in range(_FINAL_VALIDATION_ATTEMPTS):
+        before = {path: _record_signature(path) for path, _ in records}
+        for path, validator in records:
+            try:
+                exists = _validate_existing_record(path, validator)
+            except Exception as exc:
+                raise InitializationError(
+                    f"initialized project record is invalid: {path}: {exc}"
+                ) from exc
+            if exists:
+                continue
+            raise InitializationError(
+                f"initialized project record is missing: {path}"
+            )
+        after = {path: _record_signature(path) for path, _ in records}
+        if before == after and all(signature is not None for signature in after.values()):
+            return
+        if attempt + 1 < _FINAL_VALIDATION_ATTEMPTS:
+            time.sleep(_PUBLISH_LOCK_DELAY_SECONDS)
+
+    changed = ", ".join(
+        str(path)
+        for path in before
+        if before[path] != after[path] or after[path] is None
+    )
+    raise InitializationError(
+        f"initialized project state did not stabilize: {changed}"
+    )
+
+
 def initialize_project(
     root: str | Path,
     author: Mapping[str, Any] | str | None = None,
@@ -435,15 +493,5 @@ def initialize_project(
     _write_once(project.events_log, "")
     _write_once(project.rejections_log, "")
 
-    _validate_existing_run(project.run_file)
-    _validate_existing_record(
-        project.author_confirmation_queue_file,
-        _validate_author_file,
-    )
-    _validate_existing_record(project.journal_contract_file, _validate_journal_file)
-    _validate_existing_record(
-        project.events_log,
-        lambda path: _validate_jsonl_file(path, "event"),
-    )
-    _validate_existing_record(project.rejections_log, _validate_jsonl_file)
+    _require_complete_project(project)
     return project

@@ -10,7 +10,7 @@ import yaml
 from wmb.contracts import ContractError, validate_contract
 from wmb.core import project as project_module
 from wmb.core.models import ProjectPaths
-from wmb.core.project import initialize_project
+from wmb.core.project import InitializationError, initialize_project
 
 
 def _load_yaml(path: Path):
@@ -493,3 +493,94 @@ def test_incomplete_journal_contract_is_rejected(tmp_path: Path, journal):
         initialize_project(tmp_path, journal=journal)
 
     assert not (tmp_path / ".wmb" / "journal_contract.yaml").exists()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "final_validation_call"),
+    [
+        ("run.yaml", 3),
+        ("author_confirmation_queue.yaml", 2),
+        ("journal_contract.yaml", 2),
+        ("logs/events.jsonl", 2),
+        ("logs/rejections.jsonl", 2),
+    ],
+)
+def test_final_validation_rejects_concurrently_removed_canonical_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    relative_path: str,
+    final_validation_call: int,
+):
+    target = tmp_path / ".wmb" / relative_path
+    real_validate = project_module._validate_existing_record
+    calls = 0
+
+    def remove_before_final_validation(path, validator):
+        nonlocal calls
+        if path == target:
+            calls += 1
+            if calls == final_validation_call:
+                path.unlink()
+        return real_validate(path, validator)
+
+    monkeypatch.setattr(
+        project_module,
+        "_validate_existing_record",
+        remove_before_final_validation,
+    )
+
+    with pytest.raises(InitializationError, match=target.name):
+        initialize_project(tmp_path)
+
+
+def test_final_validation_wraps_concurrent_record_corruption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    target = tmp_path / ".wmb" / "journal_contract.yaml"
+    real_validate = project_module._validate_existing_record
+    calls = 0
+
+    def corrupt_before_final_validation(path, validator):
+        nonlocal calls
+        if path == target:
+            calls += 1
+            if calls == 2:
+                path.write_text("journal_name: broken\n", encoding="utf-8")
+        return real_validate(path, validator)
+
+    monkeypatch.setattr(
+        project_module,
+        "_validate_existing_record",
+        corrupt_before_final_validation,
+    )
+
+    with pytest.raises(InitializationError, match="journal_contract.yaml"):
+        initialize_project(tmp_path)
+
+
+def test_final_validation_detects_record_removed_after_it_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run_file = tmp_path / ".wmb" / "run.yaml"
+    last_record = tmp_path / ".wmb" / "logs" / "rejections.jsonl"
+    real_validate = project_module._validate_existing_record
+    last_record_calls = 0
+
+    def remove_previous_record_during_final_validation(path, validator):
+        nonlocal last_record_calls
+        if path == last_record:
+            last_record_calls += 1
+            if last_record_calls == 2:
+                run_file.unlink()
+        return real_validate(path, validator)
+
+    monkeypatch.setattr(
+        project_module,
+        "_validate_existing_record",
+        remove_previous_record_during_final_validation,
+    )
+
+    with pytest.raises(InitializationError, match="run.yaml"):
+        initialize_project(tmp_path)
