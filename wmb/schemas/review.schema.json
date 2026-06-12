@@ -17,8 +17,10 @@
       "minLength": 1
     },
     "status": {
-      "type": "string",
-      "minLength": 1
+      "enum": [
+        "completed",
+        "failed"
+      ]
     },
     "review_of": {
       "type": "string",

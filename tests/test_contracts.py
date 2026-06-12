@@ -64,6 +64,20 @@ VALID_CONTRACTS = {
     },
 }
 
+RUN_STATUSES = [
+    "intake",
+    "awaiting_research_direction",
+    "evidence_and_analysis",
+    "result_and_claim_build",
+    "manuscript_drafting",
+    "independent_review",
+    "package_verification",
+    "awaiting_final_confirmation",
+    "candidate_level_4",
+    "downgraded",
+    "blocked",
+]
+
 
 @pytest.mark.parametrize(("kind", "payload"), VALID_CONTRACTS.items())
 def test_valid_contract_passes(kind, payload):
@@ -130,3 +144,82 @@ def test_trace_arrays_reject_meaningless_entries(kind, field, entry):
 
     with pytest.raises(ContractError, match=field):
         validate_contract(kind, payload)
+
+
+@pytest.mark.parametrize("field", ["from_status", "to_status"])
+@pytest.mark.parametrize("status", RUN_STATUSES)
+def test_event_accepts_canonical_run_statuses(field, status):
+    payload = {**VALID_CONTRACTS["event"], field: status}
+
+    validate_contract("event", payload)
+
+
+@pytest.mark.parametrize("field", ["from_status", "to_status"])
+def test_event_rejects_unknown_run_status(field):
+    payload = {**VALID_CONTRACTS["event"], field: "invented_run_status"}
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract("event", payload)
+
+
+@pytest.mark.parametrize(
+    ("kind", "status"),
+    [
+        ("result", "completed"),
+        ("result", "failed"),
+        ("analysis_run", "successful"),
+        ("analysis_run", "usable_with_caveat"),
+        ("analysis_run", "failed"),
+        ("review", "completed"),
+        ("review", "failed"),
+    ],
+)
+def test_contract_accepts_canonical_record_status(kind, status):
+    payload = {**VALID_CONTRACTS[kind], "status": status}
+
+    validate_contract(kind, payload)
+
+
+@pytest.mark.parametrize("kind", ["result", "analysis_run", "review"])
+def test_contract_rejects_unknown_record_status(kind):
+    payload = {**VALID_CONTRACTS[kind], "status": "invented_status"}
+
+    with pytest.raises(ContractError, match="status"):
+        validate_contract(kind, payload)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["unresolved_issues", "limitations", "exclusions", "skipped_work"],
+)
+@pytest.mark.parametrize("entry", [None, 42, "", {}])
+def test_result_trace_arrays_reject_meaningless_entries(field, entry):
+    payload = {**VALID_CONTRACTS["result"], field: [entry]}
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract("result", payload)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "allowed_inputs",
+        "required_outputs",
+        "acceptance_criteria",
+        "prohibited_actions",
+    ],
+)
+@pytest.mark.parametrize("entry", ["", 42])
+def test_task_string_arrays_reject_invalid_items(field, entry):
+    payload = {**VALID_CONTRACTS["task"], field: [entry]}
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract("task", payload)
+
+
+@pytest.mark.parametrize("entry", ["", 42])
+def test_result_artifacts_reject_invalid_identifiers(entry):
+    payload = {**VALID_CONTRACTS["result"], "artifacts": [entry]}
+
+    with pytest.raises(ContractError, match="artifacts"):
+        validate_contract("result", payload)

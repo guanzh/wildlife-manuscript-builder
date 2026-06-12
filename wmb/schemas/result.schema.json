@@ -22,13 +22,16 @@
       "minLength": 1
     },
     "status": {
-      "type": "string",
-      "minLength": 1
+      "enum": [
+        "completed",
+        "failed"
+      ]
     },
     "artifacts": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       }
     },
     "findings": {
@@ -38,7 +41,10 @@
       }
     },
     "unresolved_issues": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     },
     "recommended_transition": {
       "enum": [
@@ -55,7 +61,10 @@
       ]
     },
     "limitations": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     },
     "failures": {
       "type": "array",
@@ -64,10 +73,16 @@
       }
     },
     "exclusions": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     },
     "skipped_work": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/trace_item"
+      }
     }
   },
   "$defs": {

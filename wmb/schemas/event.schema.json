@@ -30,12 +30,10 @@
       "minLength": 1
     },
     "from_status": {
-      "type": "string",
-      "minLength": 1
+      "$ref": "#/$defs/run_status"
     },
     "to_status": {
-      "type": "string",
-      "minLength": 1
+      "$ref": "#/$defs/run_status"
     },
     "reason": {
       "type": "string",
@@ -58,6 +56,23 @@
       "additionalProperties": {
         "type": "string"
       }
+    }
+  },
+  "$defs": {
+    "run_status": {
+      "enum": [
+        "intake",
+        "awaiting_research_direction",
+        "evidence_and_analysis",
+        "result_and_claim_build",
+        "manuscript_drafting",
+        "independent_review",
+        "package_verification",
+        "awaiting_final_confirmation",
+        "candidate_level_4",
+        "downgraded",
+        "blocked"
+      ]
     }
   },
   "additionalProperties": true

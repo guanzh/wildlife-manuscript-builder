@@ -20,8 +20,11 @@
       "minLength": 1
     },
     "status": {
-      "type": "string",
-      "minLength": 1
+      "enum": [
+        "successful",
+        "usable_with_caveat",
+        "failed"
+      ]
     },
     "command": {
       "type": "string",
