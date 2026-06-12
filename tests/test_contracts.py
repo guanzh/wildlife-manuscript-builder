@@ -106,6 +106,20 @@ def test_unknown_contract_kind_raises_contract_error():
 
 
 @pytest.mark.parametrize(
+    "kind",
+    [
+        "./run",
+        "../schemas/run",
+        "subdir/../run",
+        "run.schema",
+    ],
+)
+def test_path_like_contract_kind_raises_contract_error(kind):
+    with pytest.raises(ContractError, match="unknown contract kind"):
+        validate_contract(kind, VALID_CONTRACTS["run"])
+
+
+@pytest.mark.parametrize(
     ("kind", "status"),
     [
         ("run", "invented_run_status"),
@@ -222,4 +236,34 @@ def test_result_artifacts_reject_invalid_identifiers(entry):
     payload = {**VALID_CONTRACTS["result"], "artifacts": [entry]}
 
     with pytest.raises(ContractError, match="artifacts"):
+        validate_contract("result", payload)
+
+
+@pytest.mark.parametrize("field", ["task_ids", "artifact_ids"])
+def test_event_identifier_arrays_reject_empty_items(field):
+    payload = {**VALID_CONTRACTS["event"], field: [""]}
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract("event", payload)
+
+
+@pytest.mark.parametrize(
+    ("kind", "field"),
+    [
+        ("event", "artifact_hashes"),
+        ("analysis_run", "input_hashes"),
+    ],
+)
+@pytest.mark.parametrize("hashes", [{"": "sha256:abc"}, {"data.csv": ""}])
+def test_hash_maps_reject_empty_keys_and_values(kind, field, hashes):
+    payload = {**VALID_CONTRACTS[kind], field: hashes}
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract(kind, payload)
+
+
+def test_result_rejects_empty_string_confidence():
+    payload = {**VALID_CONTRACTS["result"], "confidence": ""}
+
+    with pytest.raises(ContractError, match="confidence"):
         validate_contract("result", payload)

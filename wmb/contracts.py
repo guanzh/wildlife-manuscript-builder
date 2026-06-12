@@ -12,6 +12,10 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
+CONTRACT_KINDS = frozenset(
+    {"run", "event", "task", "result", "analysis_run", "review"}
+)
+
 _DATE_TIME_PATTERN = re.compile(
     r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})"
 )
@@ -43,10 +47,10 @@ class ContractError(ValueError):
 
 @lru_cache(maxsize=None)
 def _validator(kind: str) -> Draft202012Validator:
-    schema_path = Path(__file__).with_name("schemas") / f"{kind}.schema.json"
-    if not schema_path.is_file():
+    if kind not in CONTRACT_KINDS:
         raise ContractError(kind, [("kind", f"unknown contract kind: {kind}")])
 
+    schema_path = Path(__file__).with_name("schemas") / f"{kind}.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     try:
         Draft202012Validator.check_schema(schema)

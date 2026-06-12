@@ -42,19 +42,25 @@
     "task_ids": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       }
     },
     "artifact_ids": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       }
     },
     "artifact_hashes": {
       "type": "object",
+      "propertyNames": {
+        "minLength": 1
+      },
       "additionalProperties": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       }
     }
   },

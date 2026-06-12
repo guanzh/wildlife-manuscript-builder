@@ -58,7 +58,8 @@
       "type": [
         "string",
         "number"
-      ]
+      ],
+      "minLength": 1
     },
     "limitations": {
       "type": "array",
