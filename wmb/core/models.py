@@ -13,7 +13,7 @@ class ProjectPaths:
     root: Path
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "root", Path(self.root))
+        object.__setattr__(self, "root", Path(self.root).expanduser().resolve())
 
     @property
     def wmb_dir(self) -> Path:
