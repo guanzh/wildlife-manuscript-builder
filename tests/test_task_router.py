@@ -26,6 +26,25 @@ def _set_task_status(project, task: dict, status: str) -> dict:
     return updated
 
 
+def _interrupt_restriction_before_manifest(
+    router: TaskRouter,
+    artifact_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict:
+    real_atomic_write = task_router_module._atomic_write_text
+
+    def fail_manifest(path, content):
+        if path == router._artifact_manifest_path:
+            raise OSError("injected manifest commit failure")
+        return real_atomic_write(path, content)
+
+    monkeypatch.setattr(task_router_module, "_atomic_write_text", fail_manifest)
+    with pytest.raises(OSError, match="manifest commit"):
+        router.classify_artifact(artifact_id, "restricted")
+    monkeypatch.setattr(task_router_module, "_atomic_write_text", real_atomic_write)
+    return _load_yaml(router._restriction_transaction_path)
+
+
 def test_router_selects_all_applicable_ecology_capabilities_deterministically(
     tmp_path: Path,
 ):
@@ -508,7 +527,32 @@ def test_reviewer_requires_completed_worker_status(tmp_path: Path, status: str):
         )
 
 
-def test_reviewer_rejects_restricted_derived_worker_outputs(tmp_path: Path):
+def test_sensitive_reviewer_can_review_restricted_worker_output(tmp_path: Path):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    output = "ordinary-analysis.bin"
+    worker = router.create_task(
+        "sensitive_data_analyst",
+        "Analyze restricted source",
+        [],
+        [output],
+    )
+    _set_task_status(project, worker, "completed")
+    router.classify_artifact(output, "restricted")
+
+    reviewer = router.create_task(
+        "sensitive_location_reviewer",
+        "Review",
+        [output],
+        ["review.yaml"],
+        review_of=worker["task_id"],
+    )
+
+    assert reviewer["capability"] == "sensitive_location_reviewer"
+    assert reviewer["allowed_inputs"] == [output]
+
+
+def test_general_reviewer_rejects_restricted_worker_output(tmp_path: Path):
     project = initialize_project(tmp_path)
     router = TaskRouter(project)
     output = "ordinary-analysis.bin"
@@ -523,7 +567,7 @@ def test_reviewer_rejects_restricted_derived_worker_outputs(tmp_path: Path):
 
     with pytest.raises(ValueError, match="restricted-derived"):
         router.create_task(
-            "sensitive_location_reviewer",
+            "statistical_reviewer",
             "Review",
             [output],
             ["review.yaml"],
@@ -555,6 +599,34 @@ def test_reviewer_rejects_outputs_derived_from_restricted_worker_inputs(
             ["review.yaml"],
             review_of=worker["task_id"],
         )
+
+
+def test_sensitive_reviewer_can_review_output_derived_from_restricted_worker_input(
+    tmp_path: Path,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    source = "restricted-source.bin"
+    output = "ordinary-analysis.bin"
+    router.classify_artifact(source, "restricted")
+    worker = router.create_task(
+        "sensitive_data_analyst",
+        "Analyze restricted source",
+        [source],
+        [output],
+    )
+    _set_task_status(project, worker, "completed")
+
+    reviewer = router.create_task(
+        "sensitive_location_reviewer",
+        "Review",
+        [output],
+        ["review.yaml"],
+        review_of=worker["task_id"],
+    )
+
+    assert reviewer["capability"] == "sensitive_location_reviewer"
+    assert reviewer["allowed_inputs"] == [output]
 
 
 def test_reviewer_rejects_worker_file_with_mismatched_task_id(tmp_path: Path):
@@ -892,6 +964,328 @@ def test_restriction_transaction_recovers_manifest_commit_failure(
     assert not journal_path.exists()
 
 
+def test_restriction_journal_records_identity_paths_and_snapshot_hashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+
+    journal = _interrupt_restriction_before_manifest(
+        router,
+        artifact_id,
+        monkeypatch,
+    )
+
+    assert journal["version"] == 2
+    assert journal["transaction_id"].startswith("restriction-")
+    assert journal["creation_token"].startswith("restriction-creation-")
+    assert journal["project_id"] == str(project.root)
+    assert journal["run_id"] == _load_yaml(project.run_file)["run_id"]
+    assert journal["affected_paths"] == [
+        ".wmb/artifacts/manifest.yaml",
+        f".wmb/tasks/{task['task_id']}.yaml",
+    ]
+    assert journal["manifest"]["path"] == ".wmb/artifacts/manifest.yaml"
+    assert journal["manifest"]["before"]["exists"] is False
+    assert journal["manifest"]["after"]["exists"] is True
+    assert journal["manifest"]["before"]["hash"].startswith("sha256:")
+    assert journal["manifest"]["after"]["hash"].startswith("sha256:")
+    assert journal["revocations"][0]["task_creation_token"] == task["creation_token"]
+    assert journal["revocations"][0]["before"]["hash"].startswith("sha256:")
+    assert journal["revocations"][0]["after"]["hash"].startswith("sha256:")
+    assert journal["transaction_hash"].startswith("sha256:")
+    assert journal["authenticator"].startswith("hmac-sha256:")
+
+
+def test_restriction_recovery_rejects_forged_identity_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    task_path = project.tasks_dir / f"{task['task_id']}.yaml"
+    journal = _interrupt_restriction_before_manifest(
+        router,
+        artifact_id,
+        monkeypatch,
+    )
+    journal["project_id"] = str(tmp_path / "forged-project")
+    journal["transaction_hash"] = task_router_module._transaction_hash(journal)
+    journal["authenticator"] = task_router_module._transaction_authenticator(
+        journal,
+        router._restriction_authentication_key(create=False),
+    )
+    router._restriction_transaction_path.write_text(
+        yaml.safe_dump(journal, sort_keys=False),
+        encoding="utf-8",
+    )
+    task_before = task_path.read_bytes()
+
+    with pytest.raises(ValueError, match="journal|transaction|identity"):
+        TaskRouter(project)._recover_restriction_transaction()
+
+    assert task_path.read_bytes() == task_before
+    assert not router._artifact_manifest_path.exists()
+    assert router._restriction_transaction_path.exists()
+
+
+def test_restriction_recovery_rejects_forged_creation_token_with_rehashed_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    task_path = project.tasks_dir / f"{task['task_id']}.yaml"
+    journal = _interrupt_restriction_before_manifest(
+        router,
+        artifact_id,
+        monkeypatch,
+    )
+    journal["creation_token"] = f"restriction-creation-{'0' * 32}"
+    journal["transaction_hash"] = task_router_module._transaction_hash(journal)
+    journal["authenticator"] = task_router_module._transaction_authenticator(
+        journal,
+        router._restriction_authentication_key(create=False),
+    )
+    router._restriction_transaction_path.write_text(
+        yaml.safe_dump(journal, sort_keys=False),
+        encoding="utf-8",
+    )
+    task_before = task_path.read_bytes()
+
+    with pytest.raises(ValueError, match="journal|transaction|identity"):
+        TaskRouter(project)._recover_restriction_transaction()
+
+    assert task_path.read_bytes() == task_before
+    assert not router._artifact_manifest_path.exists()
+    assert router._restriction_transaction_path.exists()
+
+
+def test_restriction_recovery_rejects_forged_revocation_with_rehashed_journal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    task_path = project.tasks_dir / f"{task['task_id']}.yaml"
+    journal = _interrupt_restriction_before_manifest(
+        router,
+        artifact_id,
+        monkeypatch,
+    )
+    forged_task = {
+        **journal["revocations"][0]["after"]["value"],
+        "objective": "forged replacement",
+    }
+    journal["revocations"][0]["after"] = task_router_module._snapshot(
+        True,
+        forged_task,
+    )
+    journal["transaction_hash"] = task_router_module._transaction_hash(journal)
+    journal["authenticator"] = task_router_module._transaction_authenticator(
+        journal,
+        router._restriction_authentication_key(create=False),
+    )
+    router._restriction_transaction_path.write_text(
+        yaml.safe_dump(journal, sort_keys=False),
+        encoding="utf-8",
+    )
+    task_before = task_path.read_bytes()
+
+    with pytest.raises(ValueError, match="journal|transaction|revocation"):
+        TaskRouter(project)._recover_restriction_transaction()
+
+    assert task_path.read_bytes() == task_before
+    assert not router._artifact_manifest_path.exists()
+    assert router._restriction_transaction_path.exists()
+
+
+def test_restriction_recovery_rejects_journal_from_previous_run_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    task_path = project.tasks_dir / f"{task['task_id']}.yaml"
+    _interrupt_restriction_before_manifest(router, artifact_id, monkeypatch)
+    run = _load_yaml(project.run_file)
+    project.run_file.write_text(
+        yaml.safe_dump({**run, "run_id": "run-new"}, sort_keys=False),
+        encoding="utf-8",
+    )
+    task_before = task_path.read_bytes()
+
+    with pytest.raises(ValueError, match="journal|transaction|identity"):
+        TaskRouter(project)._recover_restriction_transaction()
+
+    assert task_path.read_bytes() == task_before
+    assert not router._artifact_manifest_path.exists()
+    assert router._restriction_transaction_path.exists()
+
+
+def test_restriction_recovery_rejects_replaced_authentication_key_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    task_path = project.tasks_dir / f"{task['task_id']}.yaml"
+    _interrupt_restriction_before_manifest(router, artifact_id, monkeypatch)
+    router._restriction_authentication_key_path.write_text(
+        f"{'0' * 64}\n",
+        encoding="ascii",
+    )
+    task_before = task_path.read_bytes()
+
+    with pytest.raises(ValueError, match="journal|transaction|identity"):
+        TaskRouter(project)._recover_restriction_transaction()
+
+    assert task_path.read_bytes() == task_before
+    assert not router._artifact_manifest_path.exists()
+    assert router._restriction_transaction_path.exists()
+
+
+def test_restriction_recovery_rejects_stale_manifest_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    task_path = project.tasks_dir / f"{task['task_id']}.yaml"
+    _interrupt_restriction_before_manifest(router, artifact_id, monkeypatch)
+    newer_manifest = {
+        "artifacts": {
+            "newer.bin": {"classification": "public"},
+        }
+    }
+    router._artifact_manifest_path.write_text(
+        yaml.safe_dump(newer_manifest, sort_keys=False),
+        encoding="utf-8",
+    )
+    manifest_before = router._artifact_manifest_path.read_bytes()
+    task_before = task_path.read_bytes()
+
+    with pytest.raises(ValueError, match="snapshot|journal|transaction"):
+        TaskRouter(project)._recover_restriction_transaction()
+
+    assert router._artifact_manifest_path.read_bytes() == manifest_before
+    assert task_path.read_bytes() == task_before
+    assert router._restriction_transaction_path.exists()
+
+
+def test_restriction_recovery_rejects_stale_task_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    task_path = project.tasks_dir / f"{task['task_id']}.yaml"
+    _interrupt_restriction_before_manifest(router, artifact_id, monkeypatch)
+    newer_task = {**task, "status": "completed"}
+    task_path.write_text(
+        yaml.safe_dump(newer_task, sort_keys=False),
+        encoding="utf-8",
+    )
+    task_before = task_path.read_bytes()
+
+    with pytest.raises(ValueError, match="snapshot|journal|transaction"):
+        TaskRouter(project)._recover_restriction_transaction()
+
+    assert task_path.read_bytes() == task_before
+    assert not router._artifact_manifest_path.exists()
+    assert router._restriction_transaction_path.exists()
+
+
+def test_restriction_recovery_rejects_impossible_partial_phase_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    task_path = project.tasks_dir / f"{task['task_id']}.yaml"
+    journal = _interrupt_restriction_before_manifest(
+        router,
+        artifact_id,
+        monkeypatch,
+    )
+    task_path.write_text(
+        yaml.safe_dump(journal["revocations"][0]["after"]["value"], sort_keys=False),
+        encoding="utf-8",
+    )
+    task_before = task_path.read_bytes()
+
+    with pytest.raises(ValueError, match="phase|snapshot|transaction"):
+        TaskRouter(project)._recover_restriction_transaction()
+
+    assert task_path.read_bytes() == task_before
+    assert not router._artifact_manifest_path.exists()
+    assert router._restriction_transaction_path.exists()
+
+
 def test_pending_restriction_journal_cannot_be_hidden_by_exists_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -965,7 +1359,7 @@ def test_restriction_transaction_recovers_revocation_failure(
         manifest,
     )
     first_path, failure_path = [
-        project.tasks_dir / record["task_file"]
+        project.root / Path(record["path"])
         for record in transaction["revocations"]
     ]
 
@@ -1240,7 +1634,7 @@ def test_general_capabilities_cannot_access_sensitive_inputs(
         )
 
 
-def test_sensitive_location_reviewer_rejects_restricted_derived_worker_output(
+def test_sensitive_location_reviewer_can_access_restricted_derived_worker_output(
     tmp_path: Path,
 ):
     project = initialize_project(tmp_path)
@@ -1254,14 +1648,16 @@ def test_sensitive_location_reviewer_rejects_restricted_derived_worker_output(
     )
     _set_task_status(project, worker, "completed")
 
-    with pytest.raises(ValueError, match="restricted-derived"):
-        router.create_task(
-            "sensitive_location_reviewer",
-            "Check disclosure risk",
-            [sensitive_output],
-            ["sensitive-review.yaml"],
-            review_of=worker["task_id"],
-        )
+    reviewer = router.create_task(
+        "sensitive_location_reviewer",
+        "Check disclosure risk",
+        [sensitive_output],
+        ["sensitive-review.yaml"],
+        review_of=worker["task_id"],
+    )
+
+    assert reviewer["capability"] == "sensitive_location_reviewer"
+    assert reviewer["allowed_inputs"] == [sensitive_output]
 
 
 def test_task_id_collision_never_overwrites_existing_task(

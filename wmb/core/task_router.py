@@ -10,8 +10,11 @@ import stat
 import time
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
+from copy import deepcopy
+from hashlib import sha256
+from hmac import new as new_hmac
 from pathlib import Path
-from secrets import token_hex
+from secrets import compare_digest, token_hex
 from tempfile import NamedTemporaryFile
 from typing import Any
 from uuid import uuid4
@@ -34,9 +37,16 @@ _LOCK_ATTEMPTS = 1_000
 _LOCK_DELAY_SECONDS = 0.001
 _LOCK_RELEASE_ATTEMPTS = 3
 _RECONCILE_ATTEMPTS = 3
-_RESTRICTION_TRANSACTION_VERSION = 1
+_RESTRICTION_TRANSACTION_VERSION = 2
 _TASK_ID_PATTERN = re.compile(r"task-[A-Za-z0-9_-]+")
 _CAPABILITY_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
+_RESTRICTION_TRANSACTION_ID_PATTERN = re.compile(r"restriction-[0-9a-f]{32}")
+_RESTRICTION_CREATION_TOKEN_PATTERN = re.compile(
+    r"restriction-creation-[0-9a-f]{32}"
+)
+_SHA256_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+_HMAC_SHA256_PATTERN = re.compile(r"hmac-sha256:[0-9a-f]{64}")
+_RESTRICTION_KEY_PATTERN = re.compile(r"[0-9a-f]{64}")
 _UNSAFE_PORTABLE_PATH_CHARACTERS = frozenset('<>"|?*')
 _WINDOWS_RESERVED_NAMES = frozenset(
     {"aux", "con", "nul", "prn"}
@@ -250,6 +260,52 @@ def _canonical_capability(value: object) -> str:
     return capability
 
 
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _snapshot_hash(exists: bool, value: object) -> str:
+    encoded = _canonical_json_bytes({"exists": exists, "value": value})
+    return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+def _snapshot(exists: bool, value: object) -> dict[str, Any]:
+    snapshot_value = deepcopy(value) if exists else None
+    return {
+        "exists": exists,
+        "hash": _snapshot_hash(exists, snapshot_value),
+        "value": snapshot_value,
+    }
+
+
+def _transaction_hash(transaction: Mapping[str, Any]) -> str:
+    unsigned = {
+        key: value
+        for key, value in transaction.items()
+        if key not in {"authenticator", "transaction_hash"}
+    }
+    return _snapshot_hash(True, unsigned)
+
+
+def _transaction_authenticator(
+    transaction: Mapping[str, Any],
+    key: bytes,
+) -> str:
+    unsigned = {
+        name: value
+        for name, value in transaction.items()
+        if name != "authenticator"
+    }
+    digest = new_hmac(key, _canonical_json_bytes(unsigned), sha256).hexdigest()
+    return f"hmac-sha256:{digest}"
+
+
 def _string_list(values: object, field: str) -> list[str]:
     if isinstance(values, str) or not isinstance(values, Iterable):
         raise ValueError(f"{field} must be a list of non-blank strings")
@@ -433,6 +489,9 @@ class TaskRouter:
         self._restriction_transaction_path = (
             project.artifacts_dir / ".restriction-transaction.yaml"
         )
+        self._restriction_authentication_key_path = (
+            project.artifacts_dir / ".restriction-journal.key"
+        )
         self._task_registry_lock_path = project.tasks_dir / ".registry.lock"
 
     def select_capabilities(
@@ -588,6 +647,7 @@ class TaskRouter:
                     raise ValueError("task cannot reuse an existing task context")
 
                 manifest = self._load_artifact_manifest()
+                restricted_worker_outputs: set[str] = set()
                 if reviewed_worker is not None:
                     worker_outputs = set(reviewed_worker["required_outputs"])
                     restricted_worker_outputs = {
@@ -602,7 +662,10 @@ class TaskRouter:
                         for item in reviewed_worker["allowed_inputs"]
                     ):
                         restricted_worker_outputs.update(worker_outputs)
-                    if restricted_worker_outputs:
+                    if (
+                        restricted_worker_outputs
+                        and capability not in _SENSITIVE_CAPABILITIES
+                    ):
                         raise ValueError(
                             "reviewed worker outputs are restricted-derived artifacts: "
                             + ", ".join(sorted(restricted_worker_outputs))
@@ -623,8 +686,11 @@ class TaskRouter:
                 restricted = [
                     item
                     for item in inputs
-                    if self._classification_from_manifest(manifest, item)
-                    in _RESTRICTED_CLASSIFICATIONS
+                    if (
+                        self._classification_from_manifest(manifest, item)
+                        in _RESTRICTED_CLASSIFICATIONS
+                        or item in restricted_worker_outputs
+                    )
                 ]
                 if restricted and capability not in _SENSITIVE_CAPABILITIES:
                     raise ValueError(
@@ -722,9 +788,13 @@ class TaskRouter:
         return payload
 
     def _load_artifact_manifest(self) -> dict[str, Any]:
-        if not self._artifact_manifest_path.exists():
+        try:
+            manifest_status = self._artifact_manifest_path.lstat()
+        except FileNotFoundError:
             return {"artifacts": {}}
-        if not self._artifact_manifest_path.is_file():
+        except OSError as exc:
+            raise RuntimeError("cannot inspect artifact manifest") from exc
+        if not stat.S_ISREG(manifest_status.st_mode):
             raise ValueError("artifact manifest must be a file")
         payload = yaml.safe_load(
             self._artifact_manifest_path.read_text(encoding="utf-8")
@@ -744,14 +814,104 @@ class TaskRouter:
                 raise ValueError("artifact manifest contains an invalid classification")
             canonical_id = self._canonical_artifact_id(artifact_id, "artifact_id")
             classification = record["classification"]
-            existing = artifacts.get(canonical_id, {}).get("classification")
-            artifacts[canonical_id] = {
-                "classification": _conservative_classification(
-                    existing,
-                    classification,
-                )
-            }
+            normalized_record = {**record, "classification": classification}
+            existing_record = artifacts.get(canonical_id)
+            if existing_record is None:
+                artifacts[canonical_id] = normalized_record
+                continue
+            existing = existing_record["classification"]
+            effective = _conservative_classification(existing, classification)
+            if effective == existing:
+                artifacts[canonical_id] = {
+                    **normalized_record,
+                    **existing_record,
+                    "classification": effective,
+                }
+            else:
+                artifacts[canonical_id] = {
+                    **existing_record,
+                    **normalized_record,
+                    "classification": effective,
+                }
         return {**payload, "artifacts": artifacts}
+
+    def _project_run_id(self) -> str:
+        try:
+            run_status = self.project.run_file.lstat()
+        except OSError as exc:
+            raise ValueError("cannot inspect canonical project run") from exc
+        if not stat.S_ISREG(run_status.st_mode):
+            raise ValueError("canonical project run must be a file")
+        try:
+            run = yaml.safe_load(self.project.run_file.read_text(encoding="utf-8"))
+            validate_contract("run", run)
+        except Exception as exc:
+            raise ValueError("canonical project run is invalid") from exc
+        return run["run_id"]
+
+    def _restriction_authentication_key(self, create: bool) -> bytes:
+        if create:
+            _write_once(
+                self._restriction_authentication_key_path,
+                f"{token_hex(32)}\n",
+            )
+        try:
+            key_status = self._restriction_authentication_key_path.lstat()
+        except FileNotFoundError as exc:
+            raise ValueError("restriction journal authentication key is missing") from exc
+        except OSError as exc:
+            raise ValueError(
+                "cannot inspect restriction journal authentication key"
+            ) from exc
+        if not stat.S_ISREG(key_status.st_mode):
+            raise ValueError("restriction journal authentication key must be a file")
+        try:
+            key_text = self._restriction_authentication_key_path.read_text(
+                encoding="ascii"
+            )
+        except OSError as exc:
+            raise ValueError(
+                "cannot read restriction journal authentication key"
+            ) from exc
+        if (
+            not key_text.endswith("\n")
+            or not _RESTRICTION_KEY_PATTERN.fullmatch(key_text[:-1])
+        ):
+            raise ValueError("restriction journal authentication key is invalid")
+        return bytes.fromhex(key_text[:-1])
+
+    def _project_relative_path(self, path: Path) -> str:
+        try:
+            return path.relative_to(self.project.root).as_posix()
+        except ValueError as exc:
+            raise ValueError("restriction transaction path is outside project") from exc
+
+    def _artifact_manifest_snapshot(self) -> dict[str, Any]:
+        try:
+            manifest_status = self._artifact_manifest_path.lstat()
+        except FileNotFoundError:
+            return _snapshot(False, None)
+        except OSError as exc:
+            raise RuntimeError("cannot inspect artifact manifest snapshot") from exc
+        if not stat.S_ISREG(manifest_status.st_mode):
+            raise ValueError("artifact manifest must be a file")
+        return _snapshot(True, self._load_artifact_manifest())
+
+    def _task_snapshot(self, path: Path) -> dict[str, Any]:
+        try:
+            task_status = path.lstat()
+        except FileNotFoundError:
+            return _snapshot(False, None)
+        except OSError as exc:
+            raise RuntimeError(f"cannot inspect task snapshot: {path}") from exc
+        if not stat.S_ISREG(task_status.st_mode):
+            raise ValueError(f"task record is not a file: {path}")
+        try:
+            task = yaml.safe_load(path.read_text(encoding="utf-8"))
+            validate_contract("task", task)
+        except Exception as exc:
+            raise ValueError(f"cannot inspect task snapshot: {path}") from exc
+        return _snapshot(True, task)
 
     def _artifact_classification(self, artifact_id: str) -> str | None:
         artifact_id = self._canonical_artifact_id(artifact_id, "artifact_id")
@@ -794,12 +954,38 @@ class TaskRouter:
         classification: str,
         manifest: Mapping[str, Any],
     ) -> dict[str, Any]:
+        transaction_id = f"restriction-{uuid4().hex}"
+        creation_token = f"restriction-creation-{token_hex(16)}"
         reason = (
-            f"authorization revoked: artifact {artifact_id} classified "
-            f"{classification}"
+            f"authorization revoked by {transaction_id}: artifact "
+            f"{artifact_id} classified {classification}"
         )
+        before_manifest = self._artifact_manifest_snapshot()
+        before_manifest_value = (
+            before_manifest["value"]
+            if before_manifest["exists"]
+            else {"artifacts": {}}
+        )
+        if (
+            not isinstance(manifest, Mapping)
+            or not isinstance(manifest.get("artifacts"), Mapping)
+            or manifest["artifacts"].get(artifact_id, {}).get("classification")
+            != classification
+        ):
+            raise ValueError("restriction transaction manifest is invalid")
+        after_manifest_value = deepcopy(before_manifest_value)
+        after_manifest_value["artifacts"][artifact_id] = {
+            "classification": classification,
+            "restriction_transaction_id": transaction_id,
+            "restriction_creation_token": creation_token,
+        }
+        manifest_record = {
+            "path": self._project_relative_path(self._artifact_manifest_path),
+            "before": before_manifest,
+            "after": _snapshot(True, after_manifest_value),
+        }
         revocations: list[dict[str, Any]] = []
-        for path in self.project.tasks_dir.glob("task-*.yaml"):
+        for path in sorted(self.project.tasks_dir.glob("task-*.yaml")):
             if not path.is_file():
                 raise ValueError(f"task record is not a file: {path}")
             try:
@@ -814,20 +1000,46 @@ class TaskRouter:
                 not in {*task["allowed_inputs"], *task["required_outputs"]}
             ):
                 continue
+            task_creation_token = task.get("creation_token")
+            if not isinstance(task_creation_token, str) or not task_creation_token:
+                raise ValueError(f"task has no creation token: {path}")
             revoked = {
                 **task,
                 "status": "revoked",
                 "revocation_reason": reason,
+                "revocation_transaction_id": transaction_id,
+                "revocation_creation_token": creation_token,
             }
             validate_contract("task", revoked)
-            revocations.append({"task_file": path.name, "task": revoked})
-        return {
+            revocations.append(
+                {
+                    "path": self._project_relative_path(path),
+                    "task_creation_token": task_creation_token,
+                    "before": _snapshot(True, task),
+                    "after": _snapshot(True, revoked),
+                }
+            )
+        transaction = {
             "version": _RESTRICTION_TRANSACTION_VERSION,
+            "transaction_id": transaction_id,
+            "creation_token": creation_token,
+            "project_id": str(self.project.root),
+            "run_id": self._project_run_id(),
             "artifact_id": artifact_id,
             "classification": classification,
-            "manifest": dict(manifest),
+            "affected_paths": [
+                manifest_record["path"],
+                *(record["path"] for record in revocations),
+            ],
+            "manifest": manifest_record,
             "revocations": revocations,
         }
+        transaction["transaction_hash"] = _transaction_hash(transaction)
+        transaction["authenticator"] = _transaction_authenticator(
+            transaction,
+            self._restriction_authentication_key(create=True),
+        )
+        return transaction
 
     def _write_restriction_transaction(self, transaction: Mapping[str, Any]) -> None:
         _atomic_write_text(
@@ -858,69 +1070,335 @@ class TaskRouter:
     def _validated_restriction_transaction(self, payload: object) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("restriction transaction must be a mapping")
+        expected_keys = {
+            "version",
+            "transaction_id",
+            "creation_token",
+            "transaction_hash",
+            "authenticator",
+            "project_id",
+            "run_id",
+            "artifact_id",
+            "classification",
+            "affected_paths",
+            "manifest",
+            "revocations",
+        }
+        if set(payload) != expected_keys:
+            raise ValueError("restriction transaction has invalid fields")
+        transaction_id = payload.get("transaction_id")
+        creation_token = payload.get("creation_token")
+        transaction_hash = payload.get("transaction_hash")
+        authenticator = payload.get("authenticator")
+        if (
+            payload.get("version") != _RESTRICTION_TRANSACTION_VERSION
+            or not isinstance(transaction_id, str)
+            or not _RESTRICTION_TRANSACTION_ID_PATTERN.fullmatch(transaction_id)
+            or not isinstance(creation_token, str)
+            or not _RESTRICTION_CREATION_TOKEN_PATTERN.fullmatch(creation_token)
+            or not isinstance(transaction_hash, str)
+            or not _SHA256_PATTERN.fullmatch(transaction_hash)
+            or not compare_digest(transaction_hash, _transaction_hash(payload))
+            or not isinstance(authenticator, str)
+            or not _HMAC_SHA256_PATTERN.fullmatch(authenticator)
+            or not compare_digest(
+                authenticator,
+                _transaction_authenticator(
+                    payload,
+                    self._restriction_authentication_key(create=False),
+                ),
+            )
+            or payload.get("project_id") != str(self.project.root)
+            or payload.get("run_id") != self._project_run_id()
+        ):
+            raise ValueError("restriction transaction identity is invalid")
         artifact_id = self._canonical_artifact_id(
             payload.get("artifact_id"),
             "artifact_id",
         )
         classification = payload.get("classification")
-        manifest = payload.get("manifest")
+        manifest_record = payload.get("manifest")
         revocations = payload.get("revocations")
         if (
-            payload.get("version") != _RESTRICTION_TRANSACTION_VERSION
-            or classification not in _RESTRICTED_CLASSIFICATIONS
-            or not isinstance(manifest, dict)
-            or not isinstance(manifest.get("artifacts"), dict)
-            or manifest["artifacts"].get(artifact_id, {}).get("classification")
-            != classification
+            classification not in _RESTRICTED_CLASSIFICATIONS
+            or not isinstance(manifest_record, dict)
             or not isinstance(revocations, list)
         ):
             raise ValueError("restriction transaction has invalid metadata")
+        manifest_path = self._project_relative_path(self._artifact_manifest_path)
+        if set(manifest_record) != {"path", "before", "after"} or (
+            manifest_record.get("path") != manifest_path
+        ):
+            raise ValueError("restriction transaction manifest path is invalid")
+        before_manifest = self._validated_snapshot(
+            manifest_record.get("before"),
+            "manifest before",
+            self._validated_manifest_snapshot_value,
+        )
+        after_manifest = self._validated_snapshot(
+            manifest_record.get("after"),
+            "manifest after",
+            self._validated_manifest_snapshot_value,
+        )
+        if not after_manifest["exists"]:
+            raise ValueError("restriction transaction manifest after snapshot is invalid")
+        before_manifest_value = (
+            before_manifest["value"]
+            if before_manifest["exists"]
+            else {"artifacts": {}}
+        )
+        expected_after_manifest = deepcopy(before_manifest_value)
+        existing_classification = expected_after_manifest["artifacts"].get(
+            artifact_id, {}
+        ).get("classification")
+        if (
+            _conservative_classification(existing_classification, classification)
+            != classification
+        ):
+            raise ValueError("restriction transaction classification is not conservative")
+        expected_after_manifest["artifacts"][artifact_id] = {
+            "classification": classification,
+            "restriction_transaction_id": transaction_id,
+            "restriction_creation_token": creation_token,
+        }
+        if after_manifest["value"] != expected_after_manifest:
+            raise ValueError("restriction transaction manifest mutation is invalid")
+
         normalized_revocations: list[dict[str, Any]] = []
         for record in revocations:
-            if not isinstance(record, dict):
+            if not isinstance(record, dict) or set(record) != {
+                "path",
+                "task_creation_token",
+                "before",
+                "after",
+            }:
                 raise ValueError("restriction transaction revocation is invalid")
-            task_file = record.get("task_file")
-            task = record.get("task")
-            validate_contract("task", task)
+            before = self._validated_snapshot(
+                record.get("before"),
+                "task before",
+                self._validated_task_snapshot_value,
+            )
+            after = self._validated_snapshot(
+                record.get("after"),
+                "task after",
+                self._validated_task_snapshot_value,
+            )
+            if not before["exists"] or not after["exists"]:
+                raise ValueError("restriction transaction task snapshot is invalid")
+            task = before["value"]
+            revoked = after["value"]
+            task_creation_token = record.get("task_creation_token")
+            expected_path = self._project_relative_path(
+                self.project.tasks_dir / f"{task['task_id']}.yaml"
+            )
+            expected_revoked = {
+                **task,
+                "status": "revoked",
+                "revocation_reason": (
+                    f"authorization revoked by {transaction_id}: artifact "
+                    f"{artifact_id} classified {classification}"
+                ),
+                "revocation_transaction_id": transaction_id,
+                "revocation_creation_token": creation_token,
+            }
             if (
-                not isinstance(task_file, str)
-                or task_file != f"{task['task_id']}.yaml"
-                or task.get("status") != "revoked"
+                record.get("path") != expected_path
+                or not isinstance(task_creation_token, str)
+                or task.get("creation_token") != task_creation_token
+                or revoked.get("creation_token") != task_creation_token
+                or task.get("status") not in {"pending", "running"}
+                or task.get("capability") in _SENSITIVE_CAPABILITIES
                 or artifact_id
                 not in {*task["allowed_inputs"], *task["required_outputs"]}
+                or revoked != expected_revoked
             ):
                 raise ValueError("restriction transaction revocation is invalid")
-            normalized_revocations.append({"task_file": task_file, "task": task})
-        return {
+            normalized_revocations.append(
+                {
+                    "path": expected_path,
+                    "task_creation_token": task_creation_token,
+                    "before": before,
+                    "after": after,
+                }
+            )
+        expected_paths = [
+            manifest_path,
+            *(record["path"] for record in normalized_revocations),
+        ]
+        if payload.get("affected_paths") != expected_paths or len(
+            set(expected_paths)
+        ) != len(expected_paths):
+            raise ValueError("restriction transaction affected paths are invalid")
+        normalized = {
             "version": _RESTRICTION_TRANSACTION_VERSION,
+            "transaction_id": transaction_id,
+            "creation_token": creation_token,
+            "project_id": str(self.project.root),
+            "run_id": payload["run_id"],
             "artifact_id": artifact_id,
             "classification": classification,
-            "manifest": manifest,
+            "affected_paths": expected_paths,
+            "manifest": {
+                "path": manifest_path,
+                "before": before_manifest,
+                "after": after_manifest,
+            },
             "revocations": normalized_revocations,
         }
+        normalized["transaction_hash"] = _transaction_hash(normalized)
+        if not compare_digest(normalized["transaction_hash"], transaction_hash):
+            raise ValueError("restriction transaction normalization changed identity")
+        normalized["authenticator"] = _transaction_authenticator(
+            normalized,
+            self._restriction_authentication_key(create=False),
+        )
+        if not compare_digest(normalized["authenticator"], authenticator):
+            raise ValueError("restriction transaction authentication changed")
+        return normalized
+
+    def _validated_snapshot(
+        self,
+        payload: object,
+        label: str,
+        validate_value,
+    ) -> dict[str, Any]:
+        if not isinstance(payload, dict) or set(payload) != {
+            "exists",
+            "hash",
+            "value",
+        }:
+            raise ValueError(f"restriction transaction {label} snapshot is invalid")
+        exists = payload.get("exists")
+        snapshot_hash = payload.get("hash")
+        value = payload.get("value")
+        if (
+            not isinstance(exists, bool)
+            or not isinstance(snapshot_hash, str)
+            or not _SHA256_PATTERN.fullmatch(snapshot_hash)
+            or (not exists and value is not None)
+        ):
+            raise ValueError(f"restriction transaction {label} snapshot is invalid")
+        normalized_value = validate_value(value) if exists else None
+        normalized = _snapshot(exists, normalized_value)
+        if not compare_digest(snapshot_hash, normalized["hash"]):
+            raise ValueError(f"restriction transaction {label} hash is invalid")
+        return normalized
+
+    def _validated_manifest_snapshot_value(self, payload: object) -> dict[str, Any]:
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("artifacts"), dict
+        ):
+            raise ValueError("restriction transaction manifest snapshot is invalid")
+        artifacts: dict[str, dict[str, Any]] = {}
+        for artifact_id, record in payload["artifacts"].items():
+            canonical_id = self._canonical_artifact_id(artifact_id, "artifact_id")
+            if (
+                canonical_id != artifact_id
+                or not isinstance(record, dict)
+                or record.get("classification") not in _ARTIFACT_CLASSIFICATIONS
+            ):
+                raise ValueError("restriction transaction manifest snapshot is invalid")
+            artifacts[artifact_id] = dict(record)
+        return {**payload, "artifacts": artifacts}
+
+    def _validated_task_snapshot_value(self, payload: object) -> dict[str, Any]:
+        validate_contract("task", payload)
+        task = dict(payload)
+        if task["allowed_inputs"] != self._artifact_list(
+            task["allowed_inputs"], "allowed_inputs"
+        ) or task["required_outputs"] != self._artifact_list(
+            task["required_outputs"], "required_outputs"
+        ):
+            raise ValueError("restriction transaction task snapshot is not canonical")
+        return task
 
     def _apply_restriction_transaction(
         self,
         transaction: Mapping[str, Any],
     ) -> None:
+        transaction = self._validated_restriction_transaction(dict(transaction))
+        manifest_record = transaction["manifest"]
+        manifest_state = self._snapshot_state(
+            self._artifact_manifest_snapshot(),
+            manifest_record,
+        )
+        task_states: list[str] = []
+        for record in transaction["revocations"]:
+            path = self.project.root / Path(record["path"])
+            task_states.append(self._snapshot_state(self._task_snapshot(path), record))
+        if manifest_state == "before":
+            if any(state != "before" for state in task_states):
+                raise ValueError("restriction transaction has an impossible phase")
+        else:
+            seen_before = False
+            for state in task_states:
+                if state == "before":
+                    seen_before = True
+                elif seen_before:
+                    raise ValueError("restriction transaction has an impossible phase")
+
+        if manifest_state == "before":
+            self._write_snapshot_if_current(
+                self._artifact_manifest_path,
+                manifest_record,
+                self._artifact_manifest_snapshot,
+            )
+        for record, state in zip(transaction["revocations"], task_states):
+            if state == "after":
+                continue
+            path = self.project.root / Path(record["path"])
+            self._write_snapshot_if_current(
+                path,
+                record,
+                lambda path=path: self._task_snapshot(path),
+            )
+        self._clear_restriction_transaction(transaction)
+
+    @staticmethod
+    def _snapshot_state(
+        current: Mapping[str, Any],
+        record: Mapping[str, Any],
+    ) -> str:
+        if current == record["before"]:
+            return "before"
+        if current == record["after"]:
+            return "after"
+        raise ValueError("restriction transaction conflicts with current snapshot")
+
+    def _write_snapshot_if_current(
+        self,
+        path: Path,
+        record: Mapping[str, Any],
+        current_snapshot,
+    ) -> None:
+        if current_snapshot() != record["before"]:
+            raise ValueError("restriction transaction snapshot changed before write")
         _atomic_write_text(
-            self._artifact_manifest_path,
+            path,
             yaml.safe_dump(
-                transaction["manifest"],
+                record["after"]["value"],
                 allow_unicode=True,
                 sort_keys=False,
             ),
         )
-        for record in transaction["revocations"]:
-            _atomic_write_text(
-                self.project.tasks_dir / record["task_file"],
-                yaml.safe_dump(
-                    record["task"],
-                    allow_unicode=True,
-                    sort_keys=False,
-                ),
+        if current_snapshot() != record["after"]:
+            raise RuntimeError("restriction transaction write did not persist snapshot")
+
+    def _clear_restriction_transaction(
+        self,
+        transaction: Mapping[str, Any],
+    ) -> None:
+        try:
+            current = yaml.safe_load(
+                self._restriction_transaction_path.read_text(encoding="utf-8")
             )
-        self._restriction_transaction_path.unlink(missing_ok=True)
+        except FileNotFoundError:
+            return
+        except Exception as exc:
+            raise RuntimeError("cannot inspect restriction transaction before clear") from exc
+        if current != dict(transaction):
+            raise RuntimeError("restriction transaction journal changed before clear")
+        self._restriction_transaction_path.unlink()
 
     def _new_context(self, excluded: Iterable[str]) -> str:
         excluded_contexts = set(excluded)
