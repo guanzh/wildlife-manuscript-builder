@@ -6,6 +6,7 @@ import json
 import os
 import re
 import socket
+import stat
 import time
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
@@ -33,6 +34,7 @@ _LOCK_ATTEMPTS = 1_000
 _LOCK_DELAY_SECONDS = 0.001
 _LOCK_RELEASE_ATTEMPTS = 3
 _RECONCILE_ATTEMPTS = 3
+_RESTRICTION_TRANSACTION_VERSION = 1
 _TASK_ID_PATTERN = re.compile(r"task-[A-Za-z0-9_-]+")
 _CAPABILITY_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
 _UNSAFE_PORTABLE_PATH_CHARACTERS = frozenset('<>"|?*')
@@ -115,6 +117,7 @@ _METHOD_CAPABILITIES = {
     "dynamic_occupancy": {"occupancy_statistician"},
     "two_species_occupancy": {"occupancy_statistician"},
     "integrated_occupancy": {"occupancy_statistician", "integrated_modeler"},
+    "integrated_occupancy_or_abundance": {"integrated_modeler"},
     "sdm": {"spatial_modeler"},
     "spatial_glm": {"spatial_modeler"},
     "spatial_glmm": {"spatial_modeler"},
@@ -125,6 +128,7 @@ _METHOD_CAPABILITIES = {
     "circular_statistics": {"activity_pattern_statistician"},
     "glm": {"ecological_statistician"},
     "glmm": {"ecological_statistician"},
+    "glm_glmm": {"ecological_statistician"},
     "gam": {"ecological_statistician"},
     "scr": {"abundance_statistician"},
     "distance_sampling": {"abundance_statistician"},
@@ -135,10 +139,12 @@ _METHOD_CAPABILITIES = {
     "time_to_event": {"abundance_statistician"},
     "space_to_event": {"abundance_statistician"},
     "time_space_to_event": {"abundance_statistician"},
+    "before_after_with_effort_control": {"intervention_statistician"},
     "state_space": {"population_statistician"},
     "cjs": {"population_statistician"},
     "popan": {"population_statistician"},
     "robust_design": {"population_statistician"},
+    "cjs_popan_robust_design": {"population_statistician"},
     "multi_state": {"population_statistician"},
     "multi_state_models": {"population_statistician"},
     "capture_recapture": {"population_statistician"},
@@ -147,20 +153,32 @@ _METHOD_CAPABILITIES = {
     "matrix_models": {"population_statistician"},
     "ipm": {"population_statistician"},
     "pva": {"population_statistician"},
+    "matrix_models_ipm_pva": {"population_statistician"},
     "joint_species_model": {"community_modeler"},
     "joint_species_models": {"community_modeler"},
     "multivariate_community_model": {"community_modeler"},
     "multivariate_community_models": {"community_modeler"},
+    "community_indicators": {"community_modeler"},
+    "community_classification_and_ordination": {"community_modeler"},
     "ordination": {"community_modeler"},
     "baci": {"intervention_statistician"},
+    "baci_design": {"intervention_statistician"},
     "did": {"intervention_statistician"},
     "interrupted_time_series": {"intervention_statistician"},
+    "matched_controls": {"intervention_statistician"},
+    "temporal_spatial_overlap": {"activity_pattern_statistician"},
+    "activity_pattern_analysis": {"activity_pattern_statistician"},
     "risk_mapping": {"decision_scientist"},
     "prioritization": {"decision_scientist"},
     "cost_effectiveness": {"decision_scientist"},
     "threshold_model": {"decision_scientist"},
     "threshold_models": {"decision_scientist"},
+    "multi_indicator_framework": {"integrated_modeler"},
+    "landscape_metrics": {"landscape_modeler"},
     "connectivity": {"landscape_modeler"},
+    "connectivity_modeling_circuit_theory_least_cost_path_graph_theory": {
+        "landscape_modeler"
+    },
     "circuit_theory": {"landscape_modeler"},
     "least_cost_path": {"landscape_modeler"},
     "graph_theory": {"landscape_modeler"},
@@ -412,6 +430,9 @@ class TaskRouter:
         self.project = project
         self._artifact_manifest_path = project.artifacts_dir / "manifest.yaml"
         self._artifact_manifest_lock_path = project.artifacts_dir / ".manifest.lock"
+        self._restriction_transaction_path = (
+            project.artifacts_dir / ".restriction-transaction.yaml"
+        )
         self._task_registry_lock_path = project.tasks_dir / ".registry.lock"
 
     def select_capabilities(
@@ -476,6 +497,7 @@ class TaskRouter:
         # Global lock order: task registry, then artifact manifest.
         with _owned_project_lock(self._task_registry_lock_path):
             with _owned_project_lock(self._artifact_manifest_lock_path):
+                self._recover_restriction_transaction()
                 manifest = self._load_artifact_manifest()
                 existing = manifest["artifacts"].get(artifact_id, {}).get(
                     "classification"
@@ -485,11 +507,18 @@ class TaskRouter:
                     "classification": effective,
                 }
                 if effective in _RESTRICTED_CLASSIFICATIONS:
-                    self._revoke_unauthorized_tasks(artifact_id, effective)
-                _atomic_write_text(
-                    self._artifact_manifest_path,
-                    yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
-                )
+                    transaction = self._restriction_transaction(
+                        artifact_id,
+                        effective,
+                        manifest,
+                    )
+                    self._write_restriction_transaction(transaction)
+                    self._apply_restriction_transaction(transaction)
+                else:
+                    _atomic_write_text(
+                        self._artifact_manifest_path,
+                        yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
+                    )
         return dict(manifest["artifacts"][artifact_id])
 
     def register_artifact(
@@ -539,27 +568,45 @@ class TaskRouter:
         )
         # Global lock order: task registry, then artifact manifest.
         with _owned_project_lock(self._task_registry_lock_path):
-            existing_contexts = self._existing_task_contexts()
-            if supplied_context in existing_contexts:
-                raise ValueError("task cannot reuse an existing task context")
-
-            reviewed_worker: dict[str, Any] | None = None
-            if reviewer:
-                reviewed_worker = self._load_reviewed_worker(review_of)
-                excluded_contexts = set(existing_contexts)
-                if supplied_context is not None:
-                    excluded_contexts.add(supplied_context)
-                context_id = self._new_context(excluded_contexts)
-            else:
-                context_id = supplied_context or self._new_context(existing_contexts)
-
-            if context_id in existing_contexts:
-                raise ValueError("task cannot reuse an existing task context")
-
             with _owned_project_lock(self._artifact_manifest_lock_path):
+                self._recover_restriction_transaction()
+                existing_contexts = self._existing_task_contexts()
+                if supplied_context in existing_contexts:
+                    raise ValueError("task cannot reuse an existing task context")
+
+                reviewed_worker: dict[str, Any] | None = None
+                if reviewer:
+                    reviewed_worker = self._load_reviewed_worker(review_of)
+                    excluded_contexts = set(existing_contexts)
+                    if supplied_context is not None:
+                        excluded_contexts.add(supplied_context)
+                    context_id = self._new_context(excluded_contexts)
+                else:
+                    context_id = supplied_context or self._new_context(existing_contexts)
+
+                if context_id in existing_contexts:
+                    raise ValueError("task cannot reuse an existing task context")
+
                 manifest = self._load_artifact_manifest()
                 if reviewed_worker is not None:
                     worker_outputs = set(reviewed_worker["required_outputs"])
+                    restricted_worker_outputs = {
+                        item
+                        for item in worker_outputs
+                        if self._classification_from_manifest(manifest, item)
+                        in _RESTRICTED_CLASSIFICATIONS
+                    }
+                    if any(
+                        self._classification_from_manifest(manifest, item)
+                        in _RESTRICTED_CLASSIFICATIONS
+                        for item in reviewed_worker["allowed_inputs"]
+                    ):
+                        restricted_worker_outputs.update(worker_outputs)
+                    if restricted_worker_outputs:
+                        raise ValueError(
+                            "reviewed worker outputs are restricted-derived artifacts: "
+                            + ", ".join(sorted(restricted_worker_outputs))
+                        )
                     unauthorized = sorted(
                         item
                         for item in inputs
@@ -670,6 +717,8 @@ class TaskRouter:
             or not payload["context_id"].strip()
         ):
             raise ValueError("review_of must reference an existing worker task")
+        if payload.get("status") != "completed":
+            raise ValueError("review_of must reference a completed worker task")
         return payload
 
     def _load_artifact_manifest(self) -> dict[str, Any]:
@@ -706,9 +755,11 @@ class TaskRouter:
 
     def _artifact_classification(self, artifact_id: str) -> str | None:
         artifact_id = self._canonical_artifact_id(artifact_id, "artifact_id")
-        with _owned_project_lock(self._artifact_manifest_lock_path):
-            manifest = self._load_artifact_manifest()
-            return self._classification_from_manifest(manifest, artifact_id)
+        with _owned_project_lock(self._task_registry_lock_path):
+            with _owned_project_lock(self._artifact_manifest_lock_path):
+                self._recover_restriction_transaction()
+                manifest = self._load_artifact_manifest()
+                return self._classification_from_manifest(manifest, artifact_id)
 
     @staticmethod
     def _classification_from_manifest(
@@ -737,15 +788,17 @@ class TaskRouter:
             contexts.add(context_id)
         return contexts
 
-    def _revoke_unauthorized_tasks(
+    def _restriction_transaction(
         self,
         artifact_id: str,
         classification: str,
-    ) -> None:
+        manifest: Mapping[str, Any],
+    ) -> dict[str, Any]:
         reason = (
             f"authorization revoked: artifact {artifact_id} classified "
             f"{classification}"
         )
+        revocations: list[dict[str, Any]] = []
         for path in self.project.tasks_dir.glob("task-*.yaml"):
             if not path.is_file():
                 raise ValueError(f"task record is not a file: {path}")
@@ -767,10 +820,107 @@ class TaskRouter:
                 "revocation_reason": reason,
             }
             validate_contract("task", revoked)
-            _atomic_write_text(
-                path,
-                yaml.safe_dump(revoked, allow_unicode=True, sort_keys=False),
+            revocations.append({"task_file": path.name, "task": revoked})
+        return {
+            "version": _RESTRICTION_TRANSACTION_VERSION,
+            "artifact_id": artifact_id,
+            "classification": classification,
+            "manifest": dict(manifest),
+            "revocations": revocations,
+        }
+
+    def _write_restriction_transaction(self, transaction: Mapping[str, Any]) -> None:
+        _atomic_write_text(
+            self._restriction_transaction_path,
+            yaml.safe_dump(dict(transaction), allow_unicode=True, sort_keys=False),
+        )
+
+    def _recover_restriction_transaction(self) -> None:
+        try:
+            journal_status = self._restriction_transaction_path.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise RuntimeError(
+                "cannot inspect restriction transaction journal"
+            ) from exc
+        if not stat.S_ISREG(journal_status.st_mode):
+            raise ValueError("restriction transaction journal must be a file")
+        try:
+            transaction = yaml.safe_load(
+                self._restriction_transaction_path.read_text(encoding="utf-8")
             )
+            transaction = self._validated_restriction_transaction(transaction)
+        except Exception as exc:
+            raise ValueError("restriction transaction journal is invalid") from exc
+        self._apply_restriction_transaction(transaction)
+
+    def _validated_restriction_transaction(self, payload: object) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("restriction transaction must be a mapping")
+        artifact_id = self._canonical_artifact_id(
+            payload.get("artifact_id"),
+            "artifact_id",
+        )
+        classification = payload.get("classification")
+        manifest = payload.get("manifest")
+        revocations = payload.get("revocations")
+        if (
+            payload.get("version") != _RESTRICTION_TRANSACTION_VERSION
+            or classification not in _RESTRICTED_CLASSIFICATIONS
+            or not isinstance(manifest, dict)
+            or not isinstance(manifest.get("artifacts"), dict)
+            or manifest["artifacts"].get(artifact_id, {}).get("classification")
+            != classification
+            or not isinstance(revocations, list)
+        ):
+            raise ValueError("restriction transaction has invalid metadata")
+        normalized_revocations: list[dict[str, Any]] = []
+        for record in revocations:
+            if not isinstance(record, dict):
+                raise ValueError("restriction transaction revocation is invalid")
+            task_file = record.get("task_file")
+            task = record.get("task")
+            validate_contract("task", task)
+            if (
+                not isinstance(task_file, str)
+                or task_file != f"{task['task_id']}.yaml"
+                or task.get("status") != "revoked"
+                or artifact_id
+                not in {*task["allowed_inputs"], *task["required_outputs"]}
+            ):
+                raise ValueError("restriction transaction revocation is invalid")
+            normalized_revocations.append({"task_file": task_file, "task": task})
+        return {
+            "version": _RESTRICTION_TRANSACTION_VERSION,
+            "artifact_id": artifact_id,
+            "classification": classification,
+            "manifest": manifest,
+            "revocations": normalized_revocations,
+        }
+
+    def _apply_restriction_transaction(
+        self,
+        transaction: Mapping[str, Any],
+    ) -> None:
+        _atomic_write_text(
+            self._artifact_manifest_path,
+            yaml.safe_dump(
+                transaction["manifest"],
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+        )
+        for record in transaction["revocations"]:
+            _atomic_write_text(
+                self.project.tasks_dir / record["task_file"],
+                yaml.safe_dump(
+                    record["task"],
+                    allow_unicode=True,
+                    sort_keys=False,
+                ),
+            )
+        self._restriction_transaction_path.unlink(missing_ok=True)
 
     def _new_context(self, excluded: Iterable[str]) -> str:
         excluded_contexts = set(excluded)

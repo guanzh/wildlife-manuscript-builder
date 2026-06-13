@@ -17,6 +17,15 @@ def _load_yaml(path: Path):
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def _set_task_status(project, task: dict, status: str) -> dict:
+    updated = {**task, "status": status}
+    if status == "revoked":
+        updated["revocation_reason"] = "test revocation"
+    path = project.tasks_dir / f"{task['task_id']}.yaml"
+    path.write_text(yaml.safe_dump(updated, sort_keys=False), encoding="utf-8")
+    return updated
+
+
 def test_router_selects_all_applicable_ecology_capabilities_deterministically(
     tmp_path: Path,
 ):
@@ -126,6 +135,45 @@ def test_router_routes_exact_multivariate_community_models_alias(tmp_path: Path)
     assert selection.warnings == ()
 
 
+@pytest.mark.parametrize(
+    ("method", "expected"),
+    [
+        ("landscape metrics", "landscape_modeler"),
+        ("before-after with effort control", "intervention_statistician"),
+        ("temporal/spatial overlap", "activity_pattern_statistician"),
+        ("matched controls", "intervention_statistician"),
+        ("multi-indicator framework", "integrated_modeler"),
+        ("community indicators", "community_modeler"),
+        ("GLM/GLMM", "ecological_statistician"),
+        ("integrated occupancy or abundance", "integrated_modeler"),
+        ("community classification and ordination", "community_modeler"),
+        ("CJS, POPAN, robust design", "population_statistician"),
+        ("matrix models, IPM, PVA", "population_statistician"),
+        (
+            "connectivity modeling (circuit theory, least-cost path, graph theory)",
+            "landscape_modeler",
+        ),
+        ("BACI design", "intervention_statistician"),
+        ("activity pattern analysis", "activity_pattern_statistician"),
+    ],
+)
+def test_router_routes_documented_question_method_labels(
+    tmp_path: Path,
+    method: str,
+    expected: str,
+):
+    selection = TaskRouter(initialize_project(tmp_path)).select_capabilities(
+        data_types=[],
+        methods=[method],
+        risks=[],
+        stage="evidence_and_analysis",
+    )
+
+    assert expected in selection
+    assert "generic_method_specialist" not in selection
+    assert selection.warnings == ()
+
+
 def test_router_accepts_existing_wmb_grouped_type_and_method_labels(tmp_path: Path):
     router = TaskRouter(initialize_project(tmp_path))
 
@@ -227,8 +275,10 @@ def test_create_task_emits_valid_contract_and_persists_it(tmp_path: Path):
 def test_create_task_canonicalizes_capability_case_before_reviewer_policy(
     tmp_path: Path,
 ):
-    router = TaskRouter(initialize_project(tmp_path))
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
     worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
+    _set_task_status(project, worker, "completed")
 
     reviewer = router.create_task(
         "Statistical_Reviewer",
@@ -309,13 +359,15 @@ def test_task_contract_requires_role_and_context_id(tmp_path: Path):
 def test_reviewer_uses_isolated_context_and_only_reviewed_worker_outputs(
     tmp_path: Path,
 ):
-    router = TaskRouter(initialize_project(tmp_path))
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
     worker = router.create_task(
         "manuscript_writer",
         "Draft Results",
         [],
         ["draft.md"],
     )
+    _set_task_status(project, worker, "completed")
 
     reviewer = router.create_task(
         "statistical_reviewer",
@@ -365,6 +417,7 @@ def test_reviewer_rejects_context_reused_from_any_existing_task(
     )
     existing = unrelated_worker
     if reuse_role == "reviewer":
+        _set_task_status(router.project, unrelated_worker, "completed")
         existing = router.create_task(
             "statistical_reviewer",
             "Review unrelated artifact",
@@ -385,8 +438,10 @@ def test_reviewer_rejects_context_reused_from_any_existing_task(
 
 
 def test_reviewer_ignores_new_supplied_context_and_generates_its_own(tmp_path: Path):
-    router = TaskRouter(initialize_project(tmp_path))
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
     worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
+    _set_task_status(project, worker, "completed")
 
     reviewer = router.create_task(
         "statistical_reviewer",
@@ -401,7 +456,8 @@ def test_reviewer_ignores_new_supplied_context_and_generates_its_own(tmp_path: P
 
 
 def test_reviewer_requires_existing_worker_task(tmp_path: Path):
-    router = TaskRouter(initialize_project(tmp_path))
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
 
     with pytest.raises(ValueError, match="existing worker task"):
         router.create_task(
@@ -413,6 +469,7 @@ def test_reviewer_requires_existing_worker_task(tmp_path: Path):
         )
 
     worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
+    _set_task_status(project, worker, "completed")
     reviewer = router.create_task(
         "statistical_reviewer",
         "Review",
@@ -428,6 +485,75 @@ def test_reviewer_requires_existing_worker_task(tmp_path: Path):
             ["review.yaml"],
             ["second-review.yaml"],
             review_of=reviewer["task_id"],
+        )
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["pending", "running", "failed", "revoked", "blocked", "cancelled"],
+)
+def test_reviewer_requires_completed_worker_status(tmp_path: Path, status: str):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
+    _set_task_status(project, worker, status)
+
+    with pytest.raises(ValueError, match="worker task|task context"):
+        router.create_task(
+            "statistical_reviewer",
+            "Review",
+            ["draft.md"],
+            ["review.yaml"],
+            review_of=worker["task_id"],
+        )
+
+
+def test_reviewer_rejects_restricted_derived_worker_outputs(tmp_path: Path):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    output = "ordinary-analysis.bin"
+    worker = router.create_task(
+        "sensitive_data_analyst",
+        "Analyze restricted source",
+        [],
+        [output],
+    )
+    _set_task_status(project, worker, "completed")
+    router.classify_artifact(output, "restricted")
+
+    with pytest.raises(ValueError, match="restricted-derived"):
+        router.create_task(
+            "sensitive_location_reviewer",
+            "Review",
+            [output],
+            ["review.yaml"],
+            review_of=worker["task_id"],
+        )
+
+
+def test_reviewer_rejects_outputs_derived_from_restricted_worker_inputs(
+    tmp_path: Path,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    source = "restricted-source.bin"
+    output = "ordinary-analysis.bin"
+    router.classify_artifact(source, "restricted")
+    worker = router.create_task(
+        "sensitive_data_analyst",
+        "Analyze restricted source",
+        [source],
+        [output],
+    )
+    _set_task_status(project, worker, "completed")
+
+    with pytest.raises(ValueError, match="restricted-derived"):
+        router.create_task(
+            "statistical_reviewer",
+            "Review",
+            [output],
+            ["review.yaml"],
+            review_of=worker["task_id"],
         )
 
 
@@ -455,10 +581,12 @@ def test_reviewer_rejects_worker_file_with_mismatched_task_id(tmp_path: Path):
 def test_reviewer_accepts_worker_outputs_and_registered_review_materials(
     tmp_path: Path,
 ):
-    router = TaskRouter(initialize_project(tmp_path))
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
     router.register_artifact("verified-analysis.yaml", "verified_analysis")
     router.register_artifact("review-criteria.md", "review_criteria")
     worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
+    _set_task_status(project, worker, "completed")
 
     reviewer = router.create_task(
         "statistical_reviewer",
@@ -476,8 +604,10 @@ def test_reviewer_accepts_worker_outputs_and_registered_review_materials(
 
 
 def test_reviewer_rejects_unauthorized_inputs(tmp_path: Path):
-    router = TaskRouter(initialize_project(tmp_path))
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
     worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
+    _set_task_status(project, worker, "completed")
 
     with pytest.raises(ValueError, match="unauthorized"):
         router.create_task(
@@ -548,13 +678,15 @@ def test_task_persists_canonical_artifact_ids(tmp_path: Path):
 
 
 def test_reviewer_authorization_compares_canonical_artifact_ids(tmp_path: Path):
-    router = TaskRouter(initialize_project(tmp_path))
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
     worker = router.create_task(
         "manuscript_writer",
         "Draft",
         [],
         ["drafts/./draft.md"],
     )
+    _set_task_status(project, worker, "completed")
     alias = "DRAFTS\\draft.md" if os.name == "nt" else "drafts/draft.md"
 
     reviewer = router.create_task(
@@ -701,6 +833,183 @@ def test_restricting_artifact_keeps_authorized_and_completed_tasks(
         "pending"
     )
     assert _load_yaml(completed_path)["status"] == "completed"
+
+
+def test_restriction_transaction_recovers_manifest_commit_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    task_path = project.tasks_dir / f"{task['task_id']}.yaml"
+    journal_path = project.artifacts_dir / ".restriction-transaction.yaml"
+    real_atomic_write = task_router_module._atomic_write_text
+
+    def fail_manifest(path, content):
+        if path == router._artifact_manifest_path:
+            raise OSError("injected manifest commit failure")
+        return real_atomic_write(path, content)
+
+    monkeypatch.setattr(task_router_module, "_atomic_write_text", fail_manifest)
+
+    with pytest.raises(OSError, match="manifest commit"):
+        router.classify_artifact(artifact_id, "restricted")
+
+    assert journal_path.is_file()
+    assert _load_yaml(task_path)["status"] == "pending"
+    assert not router._artifact_manifest_path.exists()
+    before = set(project.tasks_dir.glob("task-*.yaml"))
+    with pytest.raises(OSError, match="manifest commit"):
+        router.create_task(
+            "manuscript_writer",
+            "Must not bypass pending restriction",
+            [artifact_id],
+            ["other.md"],
+        )
+    assert set(project.tasks_dir.glob("task-*.yaml")) == before
+
+    monkeypatch.setattr(task_router_module, "_atomic_write_text", real_atomic_write)
+    recovery_router = TaskRouter(project)
+    with pytest.raises(ValueError, match="restricted"):
+        recovery_router.create_task(
+            "manuscript_writer",
+            "Blocked after recovery",
+            [artifact_id],
+            ["other.md"],
+        )
+
+    assert _load_yaml(task_path)["status"] == "revoked"
+    assert _load_yaml(router._artifact_manifest_path)["artifacts"][artifact_id][
+        "classification"
+    ] == "restricted"
+    assert not journal_path.exists()
+
+
+def test_pending_restriction_journal_cannot_be_hidden_by_exists_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id],
+        ["draft.md"],
+    )
+    journal_path = project.artifacts_dir / ".restriction-transaction.yaml"
+    real_atomic_write = task_router_module._atomic_write_text
+
+    def fail_manifest(path, content):
+        if path == router._artifact_manifest_path:
+            raise OSError("injected manifest commit failure")
+        return real_atomic_write(path, content)
+
+    monkeypatch.setattr(task_router_module, "_atomic_write_text", fail_manifest)
+    with pytest.raises(OSError, match="manifest commit"):
+        router.classify_artifact(artifact_id, "restricted")
+    monkeypatch.setattr(task_router_module, "_atomic_write_text", real_atomic_write)
+
+    real_exists = Path.exists
+
+    def hide_journal(path):
+        if path == journal_path:
+            return False
+        return real_exists(path)
+
+    monkeypatch.setattr(Path, "exists", hide_journal)
+
+    with pytest.raises(ValueError, match="restricted"):
+        TaskRouter(project).create_task(
+            "manuscript_writer",
+            "Must recover hidden pending restriction",
+            [artifact_id],
+            ["other.md"],
+        )
+
+
+def test_restriction_transaction_recovers_revocation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    first_task = router.create_task(
+        "manuscript_writer",
+        "Use artifact first",
+        [artifact_id],
+        ["first-draft.md"],
+    )
+    second_task = router.create_task(
+        "ecological_statistician",
+        "Use artifact second",
+        [artifact_id],
+        ["second-analysis.yaml"],
+    )
+    journal_path = project.artifacts_dir / ".restriction-transaction.yaml"
+    real_atomic_write = task_router_module._atomic_write_text
+    manifest = router._load_artifact_manifest()
+    manifest["artifacts"][artifact_id] = {"classification": "restricted"}
+    transaction = router._restriction_transaction(
+        artifact_id,
+        "restricted",
+        manifest,
+    )
+    first_path, failure_path = [
+        project.tasks_dir / record["task_file"]
+        for record in transaction["revocations"]
+    ]
+
+    def fail_revocation(path, content):
+        if path == failure_path:
+            raise OSError("injected revocation commit failure")
+        return real_atomic_write(path, content)
+
+    monkeypatch.setattr(task_router_module, "_atomic_write_text", fail_revocation)
+
+    with pytest.raises(OSError, match="revocation commit"):
+        router.classify_artifact(artifact_id, "restricted")
+
+    assert journal_path.is_file()
+    assert _load_yaml(first_path)["status"] == "revoked"
+    assert _load_yaml(failure_path)["status"] == "pending"
+    assert _load_yaml(router._artifact_manifest_path)["artifacts"][artifact_id][
+        "classification"
+    ] == "restricted"
+    before = set(project.tasks_dir.glob("task-*.yaml"))
+    with pytest.raises(OSError, match="revocation commit"):
+        router.create_task(
+            "manuscript_writer",
+            "Must not bypass pending revocation",
+            [artifact_id],
+            ["other.md"],
+        )
+    assert set(project.tasks_dir.glob("task-*.yaml")) == before
+
+    monkeypatch.setattr(task_router_module, "_atomic_write_text", real_atomic_write)
+    recovery_router = TaskRouter(project)
+    with pytest.raises(ValueError, match="restricted"):
+        recovery_router.create_task(
+            "manuscript_writer",
+            "Blocked after recovery",
+            [artifact_id],
+            ["other.md"],
+        )
+
+    assert {
+        _load_yaml(project.tasks_dir / f"{first_task['task_id']}.yaml")["status"],
+        _load_yaml(project.tasks_dir / f"{second_task['task_id']}.yaml")["status"],
+    } == {"revoked"}
+    assert not journal_path.exists()
 
 
 def test_concurrent_router_instances_merge_artifact_manifest_updates(
@@ -917,6 +1226,7 @@ def test_general_capabilities_cannot_access_sensitive_inputs(
             [],
             [".wmb/artifacts/sensitive/exact_locations.csv"],
         )
+        _set_task_status(router.project, worker, "completed")
         review_of = worker["task_id"]
         required_outputs = ["review.yaml"]
 
@@ -930,10 +1240,11 @@ def test_general_capabilities_cannot_access_sensitive_inputs(
         )
 
 
-def test_sensitive_location_reviewer_can_access_listed_sensitive_worker_output(
+def test_sensitive_location_reviewer_rejects_restricted_derived_worker_output(
     tmp_path: Path,
 ):
-    router = TaskRouter(initialize_project(tmp_path))
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
     sensitive_output = ".wmb/artifacts/sensitive/exact_locations.csv"
     worker = router.create_task(
         "sensitive_data_analyst",
@@ -941,16 +1252,16 @@ def test_sensitive_location_reviewer_can_access_listed_sensitive_worker_output(
         [],
         [sensitive_output],
     )
+    _set_task_status(project, worker, "completed")
 
-    reviewer = router.create_task(
-        "sensitive_location_reviewer",
-        "Check disclosure risk",
-        [sensitive_output],
-        ["sensitive-review.yaml"],
-        review_of=worker["task_id"],
-    )
-
-    assert reviewer["allowed_inputs"] == [sensitive_output]
+    with pytest.raises(ValueError, match="restricted-derived"):
+        router.create_task(
+            "sensitive_location_reviewer",
+            "Check disclosure risk",
+            [sensitive_output],
+            ["sensitive-review.yaml"],
+            review_of=worker["task_id"],
+        )
 
 
 def test_task_id_collision_never_overwrites_existing_task(
@@ -1124,6 +1435,7 @@ def test_worker_cannot_claim_context_while_reviewer_persistence_is_pending(
         [],
         ["reviewed.md"],
     )
+    _set_task_status(project, reviewed_worker, "completed")
     shared_context = "context-pending-reviewer"
     persistence_started = Event()
     release_persistence = Event()
