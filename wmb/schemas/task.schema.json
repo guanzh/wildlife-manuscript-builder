@@ -6,6 +6,8 @@
   "required": [
     "task_id",
     "capability",
+    "role",
+    "context_id",
     "objective",
     "allowed_inputs",
     "required_outputs",
@@ -87,20 +89,18 @@
   "allOf": [
     {
       "if": {
+        "properties": {
+          "capability": {
+            "pattern": "_reviewer$"
+          }
+        },
         "required": [
-          "role"
+          "capability"
         ]
       },
       "then": {
         "required": [
-          "context_id"
-        ]
-      }
-    },
-    {
-      "if": {
-        "required": [
-          "role"
+          "review_of"
         ],
         "properties": {
           "role": {
@@ -108,26 +108,16 @@
           }
         }
       },
-      "then": {
-        "required": [
-          "review_of"
-        ]
-      }
-    },
-    {
-      "if": {
-        "required": [
-          "review_of"
-        ]
-      },
-      "then": {
-        "required": [
-          "role"
-        ],
+      "else": {
         "properties": {
           "role": {
-            "const": "reviewer"
+            "const": "worker"
           }
+        },
+        "not": {
+          "required": [
+            "review_of"
+          ]
         }
       }
     }

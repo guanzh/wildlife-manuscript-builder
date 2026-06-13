@@ -1,5 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+from threading import Barrier, Lock
 
 import pytest
 import yaml
@@ -38,6 +40,47 @@ def test_router_selects_all_applicable_ecology_capabilities_deterministically(
     }.issubset(capabilities)
 
 
+def test_router_surfaces_unknown_methods_and_risks_without_dropping_them(
+    tmp_path: Path,
+):
+    selection = TaskRouter(initialize_project(tmp_path)).select_capabilities(
+        data_types=[],
+        methods=["novel Bayesian fox model"],
+        risks=["community consent"],
+        stage="evidence_and_analysis",
+        target_journal="Journal of Wildlife Management",
+    )
+
+    assert "generic_method_specialist" in selection
+    assert "generic_risk_reviewer" in selection
+    assert "journal_requirements_reviewer" in selection
+    assert selection.warnings == (
+        "unknown method: novel Bayesian fox model",
+        "unknown risk: community consent",
+    )
+    assert selection.routing_warnings == selection.warnings
+
+
+def test_router_routes_existing_population_method_families(tmp_path: Path):
+    selection = TaskRouter(initialize_project(tmp_path)).select_capabilities(
+        data_types=["population_ecology"],
+        methods=[
+            "CJS",
+            "POPAN",
+            "robust design",
+            "multi-state",
+            "capture-recapture",
+            "matrix models",
+        ],
+        risks=[],
+        stage="evidence_and_analysis",
+    )
+
+    assert "population_ecologist" in selection
+    assert "population_statistician" in selection
+    assert selection.warnings == ()
+
+
 def test_router_accepts_existing_wmb_grouped_type_and_method_labels(tmp_path: Path):
     router = TaskRouter(initialize_project(tmp_path))
 
@@ -62,20 +105,33 @@ def test_router_accepts_existing_wmb_grouped_type_and_method_labels(tmp_path: Pa
 @pytest.mark.parametrize(
     ("stage", "expected"),
     [
-        ("awaiting_research_direction", "research_direction_reviewer"),
-        ("manuscript_drafting", "manuscript_writer"),
-        ("independent_review", "independent_reviewer"),
-        ("package_verification", "package_reviewer"),
+        ("intake", {"data_contract_reviewer"}),
+        (
+            "awaiting_research_direction",
+            {"research_direction_reviewer", "research_direction_writer"},
+        ),
+        ("evidence_and_analysis", {"analysis_reviewer"}),
+        ("result_and_claim_build", {"claim_reviewer", "result_card_writer"}),
+        ("manuscript_drafting", {"manuscript_writer"}),
+        ("independent_review", {"independent_reviewer", "statistical_reviewer"}),
+        ("package_verification", {"package_reviewer", "statistical_reviewer"}),
+        (
+            "awaiting_final_confirmation",
+            {"final_package_reviewer", "statistical_reviewer"},
+        ),
+        ("candidate_level_4", {"package_reviewer", "statistical_reviewer"}),
+        ("downgraded", {"deliverable_writer"}),
+        ("blocked", {"blocker_reviewer"}),
     ],
 )
 def test_router_adds_generic_capability_for_stage(
     tmp_path: Path,
     stage: str,
-    expected: str,
+    expected: set[str],
 ):
     router = TaskRouter(initialize_project(tmp_path))
 
-    assert expected in router.select_capabilities([], [], [], stage)
+    assert expected.issubset(router.select_capabilities([], [], [], stage))
 
 
 def test_create_task_emits_valid_contract_and_persists_it(tmp_path: Path):
@@ -106,6 +162,12 @@ def test_create_task_emits_valid_contract_and_persists_it(tmp_path: Path):
         {"context_id": ""},
         {"role": "reviewer"},
         {"role": "worker", "review_of": "task-other"},
+        {"capability": "statistical_reviewer", "role": "worker"},
+        {
+            "capability": "manuscript_writer",
+            "role": "reviewer",
+            "review_of": "task-other",
+        },
     ],
 )
 def test_task_contract_validates_isolation_metadata(tmp_path: Path, changes: dict):
@@ -119,6 +181,21 @@ def test_task_contract_validates_isolation_metadata(tmp_path: Path, changes: dic
 
     with pytest.raises(ContractError):
         validate_contract("task", invalid)
+
+
+def test_task_contract_requires_role_and_context_id(tmp_path: Path):
+    task = TaskRouter(initialize_project(tmp_path)).create_task(
+        "manuscript_writer",
+        "Draft",
+        [],
+        ["draft.md"],
+    )
+
+    for field in ("role", "context_id"):
+        invalid = {**task}
+        del invalid[field]
+        with pytest.raises(ContractError, match=field):
+            validate_contract("task", invalid)
 
 
 def test_reviewer_uses_isolated_context_and_only_reviewed_worker_outputs(
@@ -212,11 +289,34 @@ def test_reviewer_rejects_worker_file_with_mismatched_task_id(tmp_path: Path):
         )
 
 
-def test_reviewer_rejects_inputs_not_emitted_by_reviewed_worker(tmp_path: Path):
+def test_reviewer_accepts_worker_outputs_and_registered_review_materials(
+    tmp_path: Path,
+):
+    router = TaskRouter(initialize_project(tmp_path))
+    router.register_artifact("verified-analysis.yaml", "verified_analysis")
+    router.register_artifact("review-criteria.md", "review_criteria")
+    worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
+
+    reviewer = router.create_task(
+        "statistical_reviewer",
+        "Review",
+        ["draft.md", "verified-analysis.yaml", "review-criteria.md"],
+        ["review.yaml"],
+        review_of=worker["task_id"],
+    )
+
+    assert reviewer["allowed_inputs"] == [
+        "draft.md",
+        "verified-analysis.yaml",
+        "review-criteria.md",
+    ]
+
+
+def test_reviewer_rejects_unauthorized_inputs(tmp_path: Path):
     router = TaskRouter(initialize_project(tmp_path))
     worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
 
-    with pytest.raises(ValueError, match="unlisted"):
+    with pytest.raises(ValueError, match="unauthorized"):
         router.create_task(
             "statistical_reviewer",
             "Review",
@@ -224,6 +324,27 @@ def test_reviewer_rejects_inputs_not_emitted_by_reviewed_worker(tmp_path: Path):
             ["review.yaml"],
             review_of=worker["task_id"],
         )
+
+
+def test_artifact_manifest_authoritatively_restricts_arbitrary_filename(
+    tmp_path: Path,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    router.classify_artifact("ordinary-looking.bin", "restricted")
+
+    with pytest.raises(ValueError, match="restricted"):
+        router.create_task(
+            "manuscript_writer",
+            "Draft",
+            ["ordinary-looking.bin"],
+            ["draft.md"],
+        )
+
+    manifest = _load_yaml(project.artifacts_dir / "manifest.yaml")
+    assert manifest["artifacts"]["ordinary-looking.bin"]["classification"] == (
+        "restricted"
+    )
 
 
 @pytest.mark.parametrize("capability", ["manuscript_writer", "statistical_reviewer"])
@@ -307,3 +428,39 @@ def test_task_id_collision_never_overwrites_existing_task(
     assert task["task_id"] == "task-unique"
     assert collision_path.read_text(encoding="utf-8") == original
     assert (project.tasks_dir / "task-unique.yaml").is_file()
+
+
+def test_concurrent_same_content_tasks_get_distinct_task_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    router = TaskRouter(initialize_project(tmp_path))
+    first_calls = Barrier(2)
+    counter_lock = Lock()
+    calls = 0
+
+    def colliding_uuid():
+        nonlocal calls
+        with counter_lock:
+            calls += 1
+            call = calls
+        if call <= 2:
+            first_calls.wait(timeout=5)
+            return SimpleNamespace(hex="collision")
+        return SimpleNamespace(hex=f"unique-{call}")
+
+    monkeypatch.setattr("wmb.core.task_router.uuid4", colliding_uuid)
+
+    def create():
+        return router.create_task(
+            "manuscript_writer",
+            "Draft",
+            [],
+            ["draft.md"],
+            context_id="context-shared-worker",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tasks = list(pool.map(lambda _: create(), range(2)))
+
+    assert len({task["task_id"] for task in tasks}) == 2

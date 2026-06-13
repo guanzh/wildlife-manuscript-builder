@@ -6,6 +6,9 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from secrets import token_hex
+from tempfile import NamedTemporaryFile
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
@@ -17,6 +20,24 @@ from wmb.core.project import _write_once
 
 _IDENTIFIER_ATTEMPTS = 1_000
 _TASK_ID_PATTERN = re.compile(r"task-[A-Za-z0-9_-]+")
+_ARTIFACT_CLASSIFICATIONS = frozenset(
+    {
+        "manuscript",
+        "public",
+        "raw",
+        "raw_project_data",
+        "restricted",
+        "review_criteria",
+        "review_only",
+        "sensitive",
+        "verified",
+        "verified_analysis",
+    }
+)
+_REVIEWER_SUPPLEMENTAL_CLASSIFICATIONS = frozenset(
+    {"verified", "verified_analysis", "review_criteria", "review_only"}
+)
+_RESTRICTED_CLASSIFICATIONS = frozenset({"restricted", "sensitive"})
 
 _DATA_TYPE_CAPABILITIES = {
     "camera_trap": {"camera_trap_ecologist"},
@@ -91,7 +112,14 @@ _METHOD_CAPABILITIES = {
     "space_to_event": {"abundance_statistician"},
     "time_space_to_event": {"abundance_statistician"},
     "state_space": {"population_statistician"},
+    "cjs": {"population_statistician"},
+    "popan": {"population_statistician"},
+    "robust_design": {"population_statistician"},
+    "multi_state": {"population_statistician"},
+    "multi_state_models": {"population_statistician"},
+    "capture_recapture": {"population_statistician"},
     "matrix_model": {"population_statistician"},
+    "matrix_models": {"population_statistician"},
     "ipm": {"population_statistician"},
     "pva": {"population_statistician"},
     "joint_species_model": {"community_modeler"},
@@ -131,11 +159,15 @@ _STAGE_CAPABILITIES = {
     "evidence_and_analysis": {"analysis_reviewer"},
     "result_and_claim_build": {"claim_reviewer", "result_card_writer"},
     "manuscript_drafting": {"manuscript_writer"},
-    "independent_review": {"independent_reviewer"},
-    "package_verification": {"package_reviewer"},
-    "awaiting_final_confirmation": {"final_package_reviewer"},
-    "candidate_level_4": {"package_reviewer"},
+    "independent_review": {"independent_reviewer", "statistical_reviewer"},
+    "package_verification": {"package_reviewer", "statistical_reviewer"},
+    "awaiting_final_confirmation": {
+        "final_package_reviewer",
+        "statistical_reviewer",
+    },
+    "candidate_level_4": {"package_reviewer", "statistical_reviewer"},
     "downgraded": {"deliverable_writer"},
+    "blocked": {"blocker_reviewer"},
 }
 
 _SENSITIVE_CAPABILITIES = frozenset(
@@ -178,19 +210,29 @@ def _string_list(values: object, field: str) -> list[str]:
     return normalized
 
 
-def _capabilities_for(
+def _routed_capabilities(
     values: object,
     field: str,
     rules: Mapping[str, set[str]],
-) -> set[str]:
+    fallback: str | None = None,
+) -> tuple[set[str], list[str]]:
     if values is None:
-        return set()
+        return set(), []
     if isinstance(values, str) or not isinstance(values, Iterable):
         raise ValueError(f"{field} must be a list of non-blank strings")
     capabilities: set[str] = set()
+    warnings: list[str] = []
+    label = field.removesuffix("s").replace("_", " ")
     for value in values:
-        capabilities.update(rules.get(_token(value, field), set()))
-    return capabilities
+        token = _token(value, field)
+        matched = rules.get(token)
+        if matched is not None:
+            capabilities.update(matched)
+            continue
+        if fallback is not None:
+            capabilities.add(fallback)
+            warnings.append(f"unknown {label}: {value.strip()}")
+    return capabilities, warnings
 
 
 def _is_reviewer(capability: str) -> bool:
@@ -208,6 +250,38 @@ def _task_path(project: ProjectPaths, task_id: str) -> Path:
     return project.tasks_dir / f"{task_id}.yaml"
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    temporary_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary.write(content)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+            temporary_path = Path(temporary.name)
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+class CapabilitySelection(list[str]):
+    """List-compatible routed capabilities with explicit routing warnings."""
+
+    def __init__(self, capabilities: Iterable[str], warnings: Iterable[str]) -> None:
+        super().__init__(capabilities)
+        self.warnings = tuple(warnings)
+        self.routing_warnings = self.warnings
+
+
 class TaskRouter:
     """Route ecology capabilities and persist isolated agent tasks."""
 
@@ -217,6 +291,8 @@ class TaskRouter:
         if not project.tasks_dir.is_dir():
             raise ValueError("project must be initialized before routing tasks")
         self.project = project
+        self._artifact_manifest_path = project.artifacts_dir / "manifest.yaml"
+        self._artifact_manifest_lock = Lock()
 
     def select_capabilities(
         self,
@@ -224,20 +300,68 @@ class TaskRouter:
         methods: Iterable[str] | None,
         risks: Iterable[str] | None,
         stage: str,
-    ) -> list[str]:
+        target_journal: str | None = None,
+    ) -> CapabilitySelection:
         """Return every applicable capability in stable lexical order."""
 
-        capabilities = _capabilities_for(
+        capabilities, warnings = _routed_capabilities(
             data_types,
             "data_types",
             _DATA_TYPE_CAPABILITIES,
+            "generic_ecology_specialist",
         )
-        capabilities.update(
-            _capabilities_for(methods, "methods", _METHOD_CAPABILITIES)
+        method_capabilities, method_warnings = _routed_capabilities(
+            methods,
+            "methods",
+            _METHOD_CAPABILITIES,
+            "generic_method_specialist",
         )
-        capabilities.update(_capabilities_for(risks, "risks", _RISK_CAPABILITIES))
+        capabilities.update(method_capabilities)
+        warnings.extend(method_warnings)
+        risk_capabilities, risk_warnings = _routed_capabilities(
+            risks,
+            "risks",
+            _RISK_CAPABILITIES,
+            "generic_risk_reviewer",
+        )
+        capabilities.update(risk_capabilities)
+        warnings.extend(risk_warnings)
         capabilities.update(_STAGE_CAPABILITIES.get(_token(stage, "stage"), set()))
-        return sorted(capabilities)
+        if target_journal is not None:
+            self._nonblank(target_journal, "target_journal")
+            capabilities.add("journal_requirements_reviewer")
+        return CapabilitySelection(sorted(capabilities), sorted(set(warnings)))
+
+    def classify_artifact(
+        self,
+        artifact_id: str,
+        classification: str,
+    ) -> dict[str, Any]:
+        """Persist an authoritative access classification for one artifact."""
+
+        artifact_id = self._nonblank(artifact_id, "artifact_id")
+        classification = _token(classification, "classification")
+        if classification not in _ARTIFACT_CLASSIFICATIONS:
+            raise ValueError(f"unknown artifact classification: {classification}")
+        with self._artifact_manifest_lock:
+            manifest = self._load_artifact_manifest()
+            manifest["artifacts"][artifact_id] = {
+                "classification": classification,
+            }
+            _atomic_write_text(
+                self._artifact_manifest_path,
+                yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
+            )
+        return dict(manifest["artifacts"][artifact_id])
+
+    def register_artifact(
+        self,
+        artifact_id: str,
+        classification: str,
+    ) -> dict[str, Any]:
+        """Register an artifact classification in the project manifest."""
+
+        return self.classify_artifact(artifact_id, classification)
 
     def create_task(
         self,
@@ -270,16 +394,27 @@ class TaskRouter:
         reviewed_worker: dict[str, Any] | None = None
         if reviewer:
             reviewed_worker = self._load_reviewed_worker(review_of)
-            unlisted = sorted(set(inputs) - set(reviewed_worker["required_outputs"]))
-            if unlisted:
+            worker_outputs = set(reviewed_worker["required_outputs"])
+            unauthorized = sorted(
+                item
+                for item in inputs
+                if item not in worker_outputs
+                and self._artifact_classification(item)
+                not in _REVIEWER_SUPPLEMENTAL_CLASSIFICATIONS
+            )
+            if unauthorized:
                 raise ValueError(
-                    "reviewer allowed_inputs contain unlisted worker artifacts: "
-                    + ", ".join(unlisted)
+                    "reviewer allowed_inputs contain unauthorized artifacts: "
+                    + ", ".join(unauthorized)
                 )
         elif review_of is not None:
             raise ValueError("review_of requires a reviewer capability")
 
-        restricted = [item for item in inputs if _is_restricted(item)]
+        restricted = [
+            item
+            for item in inputs
+            if self._artifact_classification(item) in _RESTRICTED_CLASSIFICATIONS
+        ]
         if restricted and capability not in _SENSITIVE_CAPABILITIES:
             raise ValueError(
                 f"capability {capability} cannot access restricted inputs: "
@@ -306,6 +441,7 @@ class TaskRouter:
             "status": "pending",
             "role": "reviewer" if reviewer else "worker",
             "context_id": context_id,
+            "creation_token": f"creation-{token_hex(16)}",
         }
         if reviewed_worker is not None:
             base_task["review_of"] = reviewed_worker["task_id"]
@@ -335,6 +471,36 @@ class TaskRouter:
         ):
             raise ValueError("review_of must reference an existing worker task")
         return payload
+
+    def _load_artifact_manifest(self) -> dict[str, Any]:
+        if not self._artifact_manifest_path.exists():
+            return {"artifacts": {}}
+        if not self._artifact_manifest_path.is_file():
+            raise ValueError("artifact manifest must be a file")
+        payload = yaml.safe_load(
+            self._artifact_manifest_path.read_text(encoding="utf-8")
+        )
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("artifacts"), dict
+        ):
+            raise ValueError("artifact manifest must contain an artifacts mapping")
+        for artifact_id, record in payload["artifacts"].items():
+            if (
+                not isinstance(artifact_id, str)
+                or not artifact_id.strip()
+                or not isinstance(record, dict)
+                or record.get("classification") not in _ARTIFACT_CLASSIFICATIONS
+            ):
+                raise ValueError("artifact manifest contains an invalid classification")
+        return payload
+
+    def _artifact_classification(self, artifact_id: str) -> str | None:
+        manifest = self._load_artifact_manifest()
+        record = manifest["artifacts"].get(artifact_id)
+        classification = record["classification"] if record is not None else None
+        if _is_restricted(artifact_id):
+            return "restricted"
+        return classification
 
     def _new_context(self, excluded: str | None) -> str:
         for _ in range(_IDENTIFIER_ATTEMPTS):
@@ -367,4 +533,4 @@ class TaskRouter:
         return value.strip()
 
 
-__all__ = ["TaskRouter"]
+__all__ = ["CapabilitySelection", "TaskRouter"]

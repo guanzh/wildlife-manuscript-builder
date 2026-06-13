@@ -24,6 +24,8 @@ VALID_CONTRACTS = {
     "task": {
         "task_id": "analysis-001",
         "capability": "occupancy_statistician",
+        "role": "worker",
+        "context_id": "context-analysis-001",
         "objective": "Fit occupancy models",
         "allowed_inputs": ["data.csv"],
         "required_outputs": ["result.yaml"],
