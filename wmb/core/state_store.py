@@ -26,6 +26,8 @@ from wmb.core.state_machine import (
 
 _LOCK_ATTEMPTS = 1_000
 _LOCK_DELAY_SECONDS = 0.001
+_LOCK_RELEASE_DELAY_SECONDS = 0.001
+_LOCK_RELEASE_TIMEOUT_SECONDS = 1.0
 _LOCK_STALE_SECONDS = 30.0
 
 
@@ -59,7 +61,7 @@ def _lock_snapshot(lock_path: Path) -> tuple[bytes, tuple[int, int], float] | No
                 (stat.st_dev, stat.st_ino),
                 stat.st_mtime,
             )
-    except (FileNotFoundError, PermissionError):
+    except FileNotFoundError:
         return None
 
 
@@ -68,14 +70,30 @@ def _remove_lock_if_unchanged(
     expected_data: bytes,
     expected_identity: tuple[int, int],
 ) -> bool:
-    snapshot = _lock_snapshot(lock_path)
-    if snapshot is None or snapshot[:2] != (expected_data, expected_identity):
-        return False
-    try:
-        lock_path.unlink()
-    except (FileNotFoundError, PermissionError):
-        return False
-    return True
+    deadline = time.monotonic() + _LOCK_RELEASE_TIMEOUT_SECONDS
+    while True:
+        try:
+            snapshot = _lock_snapshot(lock_path)
+        except PermissionError:
+            pass
+        else:
+            if snapshot is None or snapshot[:2] != (
+                expected_data,
+                expected_identity,
+            ):
+                return False
+            try:
+                lock_path.unlink()
+            except FileNotFoundError:
+                return False
+            except PermissionError:
+                pass
+            else:
+                return True
+
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_LOCK_RELEASE_DELAY_SECONDS)
 
 
 def _lock_owner(lock_data: bytes) -> tuple[int, str, str] | None:
@@ -574,9 +592,14 @@ class StateStore:
                     _exclusive_flags(),
                     0o600,
                 )
-            except FileExistsError:
-                snapshot = _lock_snapshot(self._lock_path)
+            except (FileExistsError, PermissionError):
+                try:
+                    snapshot = _lock_snapshot(self._lock_path)
+                except PermissionError:
+                    time.sleep(_LOCK_DELAY_SECONDS)
+                    continue
                 if snapshot is None:
+                    time.sleep(_LOCK_DELAY_SECONDS)
                     continue
                 existing_data, existing_identity, modified_at = snapshot
                 if _stale_lock_is_recoverable(existing_data, modified_at):

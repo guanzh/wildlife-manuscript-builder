@@ -5,6 +5,7 @@ from pathlib import Path
 import socket
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -416,6 +417,126 @@ def test_writer_lock_records_owner_and_releases_only_unchanged_lock(tmp_path: Pa
     store._lock_path.unlink()
 
 
+def test_owned_lock_release_retries_transient_permission_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = StateStore(initialize_project(tmp_path))
+    real_unlink = Path.unlink
+    attempts = 0
+
+    def transient_unlink(path, *args, **kwargs):
+        nonlocal attempts
+        if path == store._lock_path:
+            attempts += 1
+            if attempts < 3:
+                raise PermissionError("simulated Windows sharing contention")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", transient_unlink)
+
+    with store._locked():
+        pass
+
+    assert attempts == 3
+    assert not store._lock_path.exists()
+
+
+def test_owned_lock_release_stops_after_bounded_permission_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = StateStore(initialize_project(tmp_path))
+    real_unlink = Path.unlink
+    attempts = 0
+    clock = 0.0
+
+    def blocked_unlink(path, *args, **kwargs):
+        nonlocal attempts
+        if path == store._lock_path:
+            attempts += 1
+            raise PermissionError("simulated persistent Windows sharing contention")
+        return real_unlink(path, *args, **kwargs)
+
+    def monotonic():
+        return clock
+
+    def sleep(seconds):
+        nonlocal clock
+        clock += seconds
+
+    monkeypatch.setattr(Path, "unlink", blocked_unlink)
+    monkeypatch.setattr(
+        state_store_module,
+        "time",
+        SimpleNamespace(monotonic=monotonic, sleep=sleep, time=time.time),
+    )
+    monkeypatch.setattr(state_store_module, "_LOCK_RELEASE_TIMEOUT_SECONDS", 0.003)
+    monkeypatch.setattr(state_store_module, "_LOCK_RELEASE_DELAY_SECONDS", 0.001)
+
+    with store._locked():
+        pass
+
+    assert attempts == 4
+    assert clock == pytest.approx(0.003)
+    assert store._lock_path.exists()
+    real_unlink(store._lock_path)
+
+
+def test_owned_lock_release_rechecks_ownership_before_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = StateStore(initialize_project(tmp_path))
+    real_unlink = Path.unlink
+    attempts = 0
+    replacement: dict[str, object] = {}
+
+    def replace_then_block(path, *args, **kwargs):
+        nonlocal attempts, replacement
+        if path == store._lock_path:
+            attempts += 1
+            owner = json.loads(path.read_text(encoding="utf-8"))
+            replacement = {**owner, "token": "replacement-owner"}
+            path.write_text(json.dumps(replacement), encoding="utf-8")
+            raise PermissionError("replacement arrived during sharing contention")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", replace_then_block)
+
+    with store._locked():
+        pass
+
+    assert attempts == 1
+    assert json.loads(store._lock_path.read_text(encoding="utf-8")) == replacement
+    real_unlink(store._lock_path)
+
+
+def test_writer_acquisition_retries_transient_permission_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = StateStore(initialize_project(tmp_path))
+    real_open = os.open
+    attempts = 0
+
+    def transient_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal attempts
+        if Path(path) == store._lock_path:
+            attempts += 1
+            if attempts < 3:
+                raise PermissionError("simulated Windows sharing contention")
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(state_store_module.os, "open", transient_open)
+
+    with store._locked():
+        pass
+
+    assert attempts == 3
+    assert not store._lock_path.exists()
+
+
 def test_failed_lock_record_write_releases_unchanged_owned_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -436,9 +557,11 @@ def test_failed_lock_record_write_releases_unchanged_owned_lock(
     assert not store._lock_path.exists()
 
 
+@pytest.mark.parametrize("_iteration", range(10))
 def test_slow_live_writer_lock_is_not_stolen_by_concurrent_writer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    _iteration: int,
 ):
     project = initialize_project(tmp_path)
     first = StateStore(project)
