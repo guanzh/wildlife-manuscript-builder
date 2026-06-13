@@ -332,6 +332,34 @@ def test_task_string_arrays_reject_invalid_items(field, entry):
         validate_contract("task", payload)
 
 
+@pytest.mark.parametrize(
+    "capability",
+    [
+        "Statistical_Reviewer",
+        "statistical-reviewer",
+        "statistical reviewer",
+        "statistical_reviewer/../manuscript_writer",
+        "manuscript_writer\n",
+    ],
+)
+def test_task_contract_rejects_noncanonical_capability(capability):
+    payload = {**VALID_CONTRACTS["task"], "capability": capability}
+
+    with pytest.raises(ContractError, match="capability"):
+        validate_contract("task", payload)
+
+
+def test_task_contract_cannot_bypass_reviewer_policy_with_capability_case():
+    payload = {
+        **VALID_CONTRACTS["task"],
+        "capability": "Statistical_Reviewer",
+        "role": "worker",
+    }
+
+    with pytest.raises(ContractError, match="capability"):
+        validate_contract("task", payload)
+
+
 @pytest.mark.parametrize("entry", ["", 42])
 def test_result_artifacts_reject_invalid_identifiers(entry):
     payload = {**VALID_CONTRACTS["result"], "artifacts": [entry]}

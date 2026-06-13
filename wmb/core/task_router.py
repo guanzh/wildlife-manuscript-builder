@@ -32,6 +32,7 @@ _IDENTIFIER_ATTEMPTS = 1_000
 _LOCK_ATTEMPTS = 1_000
 _LOCK_DELAY_SECONDS = 0.001
 _TASK_ID_PATTERN = re.compile(r"task-[A-Za-z0-9_-]+")
+_CAPABILITY_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
 _ARTIFACT_CLASSIFICATIONS = frozenset(
     {
         "manuscript",
@@ -50,6 +51,7 @@ _REVIEWER_SUPPLEMENTAL_CLASSIFICATIONS = frozenset(
     {"verified", "verified_analysis", "review_criteria", "review_only"}
 )
 _RESTRICTED_CLASSIFICATIONS = frozenset({"restricted", "sensitive"})
+_REVIEW_STAGE_MARKERS = ("audit", "confirmation", "review", "verification")
 
 _DATA_TYPE_CAPABILITIES = {
     "camera_trap": {"camera_trap_ecologist"},
@@ -78,7 +80,7 @@ _DATA_TYPE_CAPABILITIES = {
     "vegetation": {"plant_community_ecologist"},
     "plant_community_vegetation_survey": {"plant_community_ecologist"},
     "population_ecology": {"population_ecologist"},
-    "mark_recapture": {"population_ecologist"},
+    "mark_recapture": {"population_modeler"},
     "population_ecology_mark_recapture_matrix_models": {"population_ecologist"},
     "ecosystem_function": {"ecosystem_function_ecologist"},
     "ecosystem_function_productivity_nutrient_cycling": {
@@ -130,6 +132,7 @@ _METHOD_CAPABILITIES = {
     "multi_state": {"population_statistician"},
     "multi_state_models": {"population_statistician"},
     "capture_recapture": {"population_statistician"},
+    "mark_recapture": {"population_modeler"},
     "matrix_model": {"population_statistician"},
     "matrix_models": {"population_statistician"},
     "ipm": {"population_statistician"},
@@ -205,6 +208,17 @@ def _token(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field} must be a non-blank string")
     return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+
+
+def _canonical_capability(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("capability must be a non-blank string")
+    capability = value.strip().lower()
+    if not _CAPABILITY_PATTERN.fullmatch(capability):
+        raise ValueError(
+            "capability must use lowercase letters, digits, and single underscores"
+        )
+    return capability
 
 
 def _string_list(values: object, field: str) -> list[str]:
@@ -408,7 +422,17 @@ class TaskRouter:
         )
         capabilities.update(risk_capabilities)
         warnings.extend(risk_warnings)
-        capabilities.update(_STAGE_CAPABILITIES.get(_token(stage, "stage"), set()))
+        stage_token = _token(stage, "stage")
+        stage_capabilities = _STAGE_CAPABILITIES.get(stage_token)
+        if stage_capabilities is None:
+            capabilities.add(
+                "generic_stage_reviewer"
+                if any(marker in stage_token for marker in _REVIEW_STAGE_MARKERS)
+                else "generic_stage_specialist"
+            )
+            warnings.append(f"unknown stage: {stage.strip()}")
+        else:
+            capabilities.update(stage_capabilities)
         if target_journal is not None:
             self._nonblank(target_journal, "target_journal")
             capabilities.add("journal_requirements_reviewer")
@@ -421,7 +445,7 @@ class TaskRouter:
     ) -> dict[str, Any]:
         """Persist an authoritative access classification for one artifact."""
 
-        artifact_id = self._nonblank(artifact_id, "artifact_id")
+        artifact_id = self._canonical_artifact_id(artifact_id, "artifact_id")
         classification = _token(classification, "classification")
         if classification not in _ARTIFACT_CLASSIFICATIONS:
             raise ValueError(f"unknown artifact classification: {classification}")
@@ -465,10 +489,10 @@ class TaskRouter:
     ) -> dict[str, Any]:
         """Validate and persist one worker or isolated reviewer task."""
 
-        capability = _token(capability, "capability")
+        capability = _canonical_capability(capability)
         objective = self._nonblank(objective, "objective")
-        inputs = _string_list(allowed_inputs, "allowed_inputs")
-        outputs = _string_list(required_outputs, "required_outputs")
+        inputs = self._artifact_list(allowed_inputs, "allowed_inputs")
+        outputs = self._artifact_list(required_outputs, "required_outputs")
         criteria = _string_list(
             [] if acceptance_criteria is None else acceptance_criteria,
             "acceptance_criteria",
@@ -587,6 +611,15 @@ class TaskRouter:
         try:
             payload = yaml.safe_load(path.read_text(encoding="utf-8"))
             validate_contract("task", payload)
+            payload = dict(payload)
+            payload["allowed_inputs"] = self._artifact_list(
+                payload["allowed_inputs"],
+                "allowed_inputs",
+            )
+            payload["required_outputs"] = self._artifact_list(
+                payload["required_outputs"],
+                "required_outputs",
+            )
         except Exception as exc:
             raise ValueError(
                 "review_of must reference an existing worker task"
@@ -614,6 +647,7 @@ class TaskRouter:
             payload.get("artifacts"), dict
         ):
             raise ValueError("artifact manifest must contain an artifacts mapping")
+        artifacts: dict[str, dict[str, str]] = {}
         for artifact_id, record in payload["artifacts"].items():
             if (
                 not isinstance(artifact_id, str)
@@ -622,9 +656,19 @@ class TaskRouter:
                 or record.get("classification") not in _ARTIFACT_CLASSIFICATIONS
             ):
                 raise ValueError("artifact manifest contains an invalid classification")
-        return payload
+            canonical_id = self._canonical_artifact_id(artifact_id, "artifact_id")
+            classification = record["classification"]
+            existing = artifacts.get(canonical_id, {}).get("classification")
+            artifacts[canonical_id] = {
+                "classification": _conservative_classification(
+                    existing,
+                    classification,
+                )
+            }
+        return {**payload, "artifacts": artifacts}
 
     def _artifact_classification(self, artifact_id: str) -> str | None:
+        artifact_id = self._canonical_artifact_id(artifact_id, "artifact_id")
         with _owned_project_lock(self._artifact_manifest_lock_path):
             manifest = self._load_artifact_manifest()
             return self._classification_from_manifest(manifest, artifact_id)
@@ -676,10 +720,66 @@ class TaskRouter:
             try:
                 persisted = path.read_text(encoding="utf-8")
             except (FileNotFoundError, IsADirectoryError, PermissionError):
+                owned = self._task_owned_by(base_task)
+                if owned is not None:
+                    return owned
                 continue
             if persisted == content:
                 return task
+            owned = self._task_owned_by(base_task)
+            if owned is not None:
+                return owned
         raise FileExistsError("could not allocate a unique task_id")
+
+    def _task_owned_by(self, base_task: Mapping[str, Any]) -> dict[str, Any] | None:
+        creation_token = base_task["creation_token"]
+        owned: dict[str, Any] | None = None
+        for path in self.project.tasks_dir.glob("task-*.yaml"):
+            try:
+                payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+                validate_contract("task", payload)
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                raise ValueError(f"cannot reconcile persisted task: {path}") from exc
+            if payload.get("creation_token") != creation_token:
+                continue
+            if owned is not None or any(
+                payload.get(field) != value for field, value in base_task.items()
+            ):
+                raise ValueError("task creation token does not identify one owned task")
+            owned = payload
+        return owned
+
+    def _artifact_list(self, values: object, field: str) -> list[str]:
+        canonical: list[str] = []
+        seen: set[str] = set()
+        for value in _string_list(values, field):
+            artifact_id = self._canonical_artifact_id(value, field)
+            if artifact_id not in seen:
+                canonical.append(artifact_id)
+                seen.add(artifact_id)
+        return canonical
+
+    def _canonical_artifact_id(self, value: object, field: str) -> str:
+        artifact_id = self._nonblank(value, field)
+        candidate = Path(artifact_id)
+        if any(part == os.pardir for part in candidate.parts):
+            raise ValueError(f"{field} must not contain path traversal")
+        try:
+            resolved = (
+                candidate.resolve()
+                if candidate.is_absolute()
+                else (self.project.root / candidate).resolve()
+            )
+            relative = resolved.relative_to(self.project.root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ValueError(
+                f"{field} must identify an artifact inside the project"
+            ) from exc
+        if not relative.parts:
+            raise ValueError(f"{field} must identify an artifact inside the project")
+        return os.path.normcase(str(relative)).replace(os.sep, "/")
 
     @staticmethod
     def _nonblank(value: object, field: str) -> str:

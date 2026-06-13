@@ -1,3 +1,4 @@
+import os
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from types import SimpleNamespace
@@ -82,6 +83,23 @@ def test_router_routes_existing_population_method_families(tmp_path: Path):
     assert selection.warnings == ()
 
 
+@pytest.mark.parametrize("field", ["data_types", "methods"])
+def test_router_routes_mark_recapture_alias_to_population_modeler(
+    tmp_path: Path,
+    field: str,
+):
+    arguments = {"data_types": [], "methods": []}
+    arguments[field] = ["mark-recapture"]
+
+    selection = TaskRouter(initialize_project(tmp_path)).select_capabilities(
+        **arguments,
+        risks=[],
+        stage="evidence_and_analysis",
+    )
+
+    assert "population_modeler" in selection
+
+
 def test_router_accepts_existing_wmb_grouped_type_and_method_labels(tmp_path: Path):
     router = TaskRouter(initialize_project(tmp_path))
 
@@ -101,6 +119,30 @@ def test_router_accepts_existing_wmb_grouped_type_and_method_labels(tmp_path: Pa
         "spatial_modeler",
         "survey_ecologist",
     }.issubset(capabilities)
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected_capability"),
+    [
+        ("novel analysis stage", "generic_stage_specialist"),
+        ("novel peer review", "generic_stage_reviewer"),
+        ("novel package verification", "generic_stage_reviewer"),
+    ],
+)
+def test_router_surfaces_unknown_stage_with_generic_capability(
+    tmp_path: Path,
+    stage: str,
+    expected_capability: str,
+):
+    selection = TaskRouter(initialize_project(tmp_path)).select_capabilities(
+        data_types=[],
+        methods=[],
+        risks=[],
+        stage=stage,
+    )
+
+    assert expected_capability in selection
+    assert selection.warnings == (f"unknown stage: {stage}",)
 
 
 @pytest.mark.parametrize(
@@ -154,6 +196,45 @@ def test_create_task_emits_valid_contract_and_persists_it(tmp_path: Path):
     assert task["context_id"].startswith("context-")
     assert task["status"] == "pending"
     assert _load_yaml(project.tasks_dir / f"{task['task_id']}.yaml") == task
+
+
+def test_create_task_canonicalizes_capability_case_before_reviewer_policy(
+    tmp_path: Path,
+):
+    router = TaskRouter(initialize_project(tmp_path))
+    worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
+
+    reviewer = router.create_task(
+        "Statistical_Reviewer",
+        "Review",
+        ["draft.md"],
+        ["review.yaml"],
+        review_of=worker["task_id"],
+    )
+
+    assert reviewer["capability"] == "statistical_reviewer"
+    assert reviewer["role"] == "reviewer"
+
+
+@pytest.mark.parametrize(
+    "capability",
+    [
+        "statistical-reviewer",
+        "statistical reviewer",
+        "statistical_reviewer/../manuscript_writer",
+    ],
+)
+def test_create_task_rejects_unsafe_capability_strings(
+    tmp_path: Path,
+    capability: str,
+):
+    with pytest.raises(ValueError, match="capability"):
+        TaskRouter(initialize_project(tmp_path)).create_task(
+            capability,
+            "Draft",
+            [],
+            ["draft.md"],
+        )
 
 
 @pytest.mark.parametrize(
@@ -401,6 +482,93 @@ def test_artifact_manifest_authoritatively_restricts_arbitrary_filename(
     assert manifest["artifacts"]["ordinary-looking.bin"]["classification"] == (
         "restricted"
     )
+
+
+def test_artifact_alias_cannot_bypass_restricted_classification(tmp_path: Path):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    router.classify_artifact("data/./Observations.csv", "restricted")
+    alias = "DATA\\observations.csv" if os.name == "nt" else "data/Observations.csv"
+    router.classify_artifact(alias, "verified")
+
+    with pytest.raises(ValueError, match="restricted"):
+        router.create_task(
+            "manuscript_writer",
+            "Draft",
+            [alias],
+            ["draft.md"],
+        )
+
+    manifest = _load_yaml(project.artifacts_dir / "manifest.yaml")
+    expected = os.path.normcase("data/Observations.csv").replace("\\", "/")
+    assert set(manifest["artifacts"]) == {expected}
+    assert manifest["artifacts"][expected]["classification"] == "restricted"
+
+
+def test_task_persists_canonical_artifact_ids(tmp_path: Path):
+    task = TaskRouter(initialize_project(tmp_path)).create_task(
+        "manuscript_writer",
+        "Draft",
+        ["data/./camera.csv"],
+        ["drafts/./draft.md"],
+    )
+
+    assert task["allowed_inputs"] == [
+        os.path.normcase("data/camera.csv").replace("\\", "/")
+    ]
+    assert task["required_outputs"] == [
+        os.path.normcase("drafts/draft.md").replace("\\", "/")
+    ]
+
+
+def test_reviewer_authorization_compares_canonical_artifact_ids(tmp_path: Path):
+    router = TaskRouter(initialize_project(tmp_path))
+    worker = router.create_task(
+        "manuscript_writer",
+        "Draft",
+        [],
+        ["drafts/./draft.md"],
+    )
+    alias = "DRAFTS\\draft.md" if os.name == "nt" else "drafts/draft.md"
+
+    reviewer = router.create_task(
+        "statistical_reviewer",
+        "Review",
+        [alias],
+        ["review.yaml"],
+        review_of=worker["task_id"],
+    )
+
+    assert reviewer["allowed_inputs"] == [
+        os.path.normcase("drafts/draft.md").replace("\\", "/")
+    ]
+
+
+def test_router_rejects_traversal_and_outside_project_artifact_ids(tmp_path: Path):
+    router = TaskRouter(initialize_project(tmp_path))
+    invalid_ids = [
+        "../outside.csv",
+        "data/../outside.csv",
+        str(tmp_path.parent / "outside.csv"),
+    ]
+
+    for artifact_id in invalid_ids:
+        with pytest.raises(ValueError, match="artifact"):
+            router.classify_artifact(artifact_id, "restricted")
+        with pytest.raises(ValueError, match="allowed_inputs"):
+            router.create_task(
+                "manuscript_writer",
+                "Draft",
+                [artifact_id],
+                ["draft.md"],
+            )
+        with pytest.raises(ValueError, match="required_outputs"):
+            router.create_task(
+                "manuscript_writer",
+                "Draft",
+                [],
+                [artifact_id],
+            )
 
 
 def test_concurrent_router_instances_merge_artifact_manifest_updates(
@@ -689,6 +857,44 @@ def test_task_id_collision_never_overwrites_existing_task(
     assert task["task_id"] == "task-unique"
     assert collision_path.read_text(encoding="utf-8") == original
     assert (project.tasks_dir / "task-unique.yaml").is_file()
+
+
+def test_transient_read_after_successful_write_does_not_duplicate_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    identifiers = iter(
+        [
+            SimpleNamespace(hex="context"),
+            SimpleNamespace(hex="first"),
+            SimpleNamespace(hex="second"),
+        ]
+    )
+    real_read_text = Path.read_text
+    failed_once = False
+
+    def transient_task_read(path, *args, **kwargs):
+        nonlocal failed_once
+        if path.name == "task-first.yaml" and not failed_once:
+            failed_once = True
+            raise PermissionError("transient confirmation read failure")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(task_router_module, "uuid4", lambda: next(identifiers))
+    monkeypatch.setattr(Path, "read_text", transient_task_read)
+
+    task = TaskRouter(project).create_task(
+        "manuscript_writer",
+        "Draft",
+        [],
+        ["draft.md"],
+    )
+
+    persisted = list(project.tasks_dir.glob("task-*.yaml"))
+    assert task["task_id"] == "task-first"
+    assert len(persisted) == 1
+    assert _load_yaml(persisted[0])["context_id"] == task["context_id"]
 
 
 def test_concurrent_same_content_tasks_get_distinct_task_ids(
