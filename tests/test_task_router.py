@@ -100,6 +100,32 @@ def test_router_routes_mark_recapture_alias_to_population_modeler(
     assert "population_modeler" in selection
 
 
+def test_router_routes_exact_molecular_ecology_grouped_alias(tmp_path: Path):
+    selection = TaskRouter(initialize_project(tmp_path)).select_capabilities(
+        data_types=["Molecular Ecology (eDNA, Metabarcoding)"],
+        methods=[],
+        risks=[],
+        stage="evidence_and_analysis",
+    )
+
+    assert "molecular_ecologist" in selection
+    assert "generic_ecology_specialist" not in selection
+    assert selection.warnings == ()
+
+
+def test_router_routes_exact_multivariate_community_models_alias(tmp_path: Path):
+    selection = TaskRouter(initialize_project(tmp_path)).select_capabilities(
+        data_types=[],
+        methods=["multivariate community models"],
+        risks=[],
+        stage="evidence_and_analysis",
+    )
+
+    assert "community_modeler" in selection
+    assert "generic_method_specialist" not in selection
+    assert selection.warnings == ()
+
+
 def test_router_accepts_existing_wmb_grouped_type_and_method_labels(tmp_path: Path):
     router = TaskRouter(initialize_project(tmp_path))
 
@@ -571,6 +597,112 @@ def test_router_rejects_traversal_and_outside_project_artifact_ids(tmp_path: Pat
             )
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows path alias rules")
+@pytest.mark.parametrize(
+    "artifact_id",
+    [
+        "data/report.csv.",
+        "data/report.csv ",
+        "data/CON",
+        "data/con.txt",
+        "data/CON .txt",
+        "data/NUL.csv",
+        "data/AUX/sub.csv",
+        "data/COM1.txt",
+        "data/LPT9",
+        "data/bad?.csv",
+    ],
+)
+def test_windows_artifact_aliases_are_rejected(
+    tmp_path: Path,
+    artifact_id: str,
+):
+    router = TaskRouter(initialize_project(tmp_path))
+
+    with pytest.raises(ValueError, match="artifact"):
+        router.classify_artifact(artifact_id, "restricted")
+    with pytest.raises(ValueError, match="allowed_inputs"):
+        router.create_task("manuscript_writer", "Draft", [artifact_id], ["draft.md"])
+
+
+def test_general_capability_cannot_write_restricted_output(tmp_path: Path):
+    router = TaskRouter(initialize_project(tmp_path))
+    router.classify_artifact("ordinary-output.bin", "restricted")
+
+    with pytest.raises(ValueError, match="restricted outputs"):
+        router.create_task(
+            "manuscript_writer",
+            "Overwrite restricted output",
+            [],
+            ["ordinary-output.bin"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "status"),
+    [("allowed_inputs", "pending"), ("required_outputs", "running")],
+)
+def test_restricting_artifact_revokes_affected_active_unauthorized_tasks(
+    tmp_path: Path,
+    field: str,
+    status: str,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task = router.create_task(
+        "manuscript_writer",
+        "Use artifact",
+        [artifact_id] if field == "allowed_inputs" else [],
+        [artifact_id] if field == "required_outputs" else ["draft.md"],
+    )
+    path = project.tasks_dir / f"{task['task_id']}.yaml"
+    if status == "running":
+        path.write_text(
+            yaml.safe_dump({**task, "status": "running"}, sort_keys=False),
+            encoding="utf-8",
+        )
+
+    router.classify_artifact(artifact_id, "restricted")
+
+    revoked = _load_yaml(path)
+    assert revoked["status"] == "revoked"
+    assert artifact_id in revoked["revocation_reason"]
+    assert "restricted" in revoked["revocation_reason"]
+
+
+def test_restricting_artifact_keeps_authorized_and_completed_tasks(
+    tmp_path: Path,
+):
+    project = initialize_project(tmp_path)
+    router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    authorized = router.create_task(
+        "sensitive_data_analyst",
+        "Use restricted artifact",
+        [artifact_id],
+        ["safe-summary.md"],
+    )
+    completed = router.create_task(
+        "manuscript_writer",
+        "Past use",
+        [artifact_id],
+        ["past-summary.md"],
+    )
+    completed_path = project.tasks_dir / f"{completed['task_id']}.yaml"
+    completed_path.write_text(
+        yaml.safe_dump({**completed, "status": "completed"}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    router.classify_artifact(artifact_id, "restricted")
+
+    assert _load_yaml(project.tasks_dir / f"{authorized['task_id']}.yaml")["status"] == (
+        "pending"
+    )
+    assert _load_yaml(completed_path)["status"] == "completed"
+
+
 def test_concurrent_router_instances_merge_artifact_manifest_updates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -713,8 +845,12 @@ def test_task_persistence_is_atomic_with_artifact_reclassification(
         finally:
             release_persistence.set()
 
-        task_future.result(timeout=5)
+        task = task_future.result(timeout=5)
         classification_future.result(timeout=5)
+
+    assert _load_yaml(project.tasks_dir / f"{task['task_id']}.yaml")["status"] == (
+        "revoked"
+    )
 
 
 def test_reclassification_that_wins_manifest_lock_blocks_general_task(
@@ -897,6 +1033,64 @@ def test_transient_read_after_successful_write_does_not_duplicate_context(
     assert _load_yaml(persisted[0])["context_id"] == task["context_id"]
 
 
+def test_post_publication_write_exception_reconciles_owned_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    real_write_once = task_router_module._write_once
+
+    def publish_then_fail(path, content):
+        real_write_once(path, content)
+        raise RuntimeError("simulated post-publication failure")
+
+    monkeypatch.setattr(task_router_module, "_write_once", publish_then_fail)
+
+    task = TaskRouter(project).create_task(
+        "manuscript_writer",
+        "Draft",
+        [],
+        ["draft.md"],
+    )
+
+    persisted = list(project.tasks_dir.glob("task-*.yaml"))
+    assert len(persisted) == 1
+    assert _load_yaml(persisted[0]) == task
+
+
+def test_post_publication_exception_retries_transient_reconciliation_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    real_write_once = task_router_module._write_once
+    real_read_text = Path.read_text
+    failed_once = False
+
+    def publish_then_fail(path, content):
+        real_write_once(path, content)
+        raise OSError("simulated post-publication failure")
+
+    def transient_read(path, *args, **kwargs):
+        nonlocal failed_once
+        if path.parent == project.tasks_dir and path.name.startswith("task-") and not failed_once:
+            failed_once = True
+            raise OSError("simulated transient reconciliation failure")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(task_router_module, "_write_once", publish_then_fail)
+    monkeypatch.setattr(Path, "read_text", transient_read)
+
+    task = TaskRouter(project).create_task(
+        "manuscript_writer",
+        "Draft",
+        [],
+        ["draft.md"],
+    )
+
+    assert _load_yaml(project.tasks_dir / f"{task['task_id']}.yaml") == task
+
+
 def test_concurrent_same_content_tasks_get_distinct_task_ids(
     tmp_path: Path,
 ):
@@ -982,3 +1176,69 @@ def test_worker_cannot_claim_context_while_reviewer_persistence_is_pending(
     }
     assert reviewer["context_id"] == shared_context
     assert len(persisted_contexts) == len(list(project.tasks_dir.glob("task-*.yaml")))
+
+
+def test_owned_project_lock_release_retries_transient_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    lock_path = project.tasks_dir / ".test.lock"
+    real_remove = task_router_module._remove_lock_if_unchanged
+    attempts = 0
+
+    def transient_remove(path, data, identity):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            return False
+        return real_remove(path, data, identity)
+
+    monkeypatch.setattr(
+        task_router_module,
+        "_remove_lock_if_unchanged",
+        transient_remove,
+    )
+
+    with task_router_module._owned_project_lock(lock_path):
+        pass
+
+    assert attempts == 3
+    assert not lock_path.exists()
+
+
+def test_owned_project_lock_release_failure_raises_clear_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    lock_path = project.tasks_dir / ".test.lock"
+    real_unlink = Path.unlink
+    monkeypatch.setattr(
+        task_router_module,
+        "_remove_lock_if_unchanged",
+        lambda path, data, identity: False,
+    )
+
+    with pytest.raises(RuntimeError, match="release owned project lock"):
+        with task_router_module._owned_project_lock(lock_path):
+            pass
+
+    assert lock_path.exists()
+    real_unlink(lock_path)
+
+
+def test_owned_project_lock_release_never_deletes_replacement(
+    tmp_path: Path,
+):
+    project = initialize_project(tmp_path)
+    lock_path = project.tasks_dir / ".test.lock"
+    replacement = b'{"token":"replacement-owner"}'
+
+    with pytest.raises(RuntimeError, match="release owned project lock"):
+        with task_router_module._owned_project_lock(lock_path):
+            lock_path.unlink()
+            lock_path.write_bytes(replacement)
+
+    assert lock_path.read_bytes() == replacement
+    lock_path.unlink()

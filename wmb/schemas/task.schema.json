@@ -3,6 +3,26 @@
   "$id": "https://wildlife-manuscript-builder.local/schemas/task.schema.json",
   "title": "WMB Agent Task",
   "type": "object",
+  "$defs": {
+    "taskId": {
+      "type": "string",
+      "pattern": "^task-[A-Za-z0-9_-]+(?![\\s\\S])"
+    },
+    "artifactPath": {
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {
+          "pattern": "^(?![\\\\/])(?!.*[\\\\:<>\"|?*])(?!.*//)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*(?:^|/)[^/]*[ .](?:/|$))[^\\x00-\\x1f\\r\\n/]+(?:/[^\\x00-\\x1f\\r\\n/]+)*(?![\\s\\S])"
+        },
+        {
+          "not": {
+            "pattern": "(?:^|/)(?:[Aa][Uu][Xx]|[Cc][Oo][Nn]|[Nn][Uu][Ll]|[Pp][Rr][Nn]|[Cc][Oo][Mm][1-9¹²³]|[Ll][Pp][Tt][1-9¹²³])[ ]*(?:\\.[^/]*)?(?:/|$)"
+          }
+        }
+      ]
+    }
+  },
   "required": [
     "task_id",
     "capability",
@@ -18,8 +38,7 @@
   ],
   "properties": {
     "task_id": {
-      "type": "string",
-      "minLength": 1
+      "$ref": "#/$defs/taskId"
     },
     "capability": {
       "type": "string",
@@ -38,9 +57,7 @@
       "pattern": "\\S"
     },
     "review_of": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "\\S"
+      "$ref": "#/$defs/taskId"
     },
     "objective": {
       "type": "string",
@@ -49,15 +66,13 @@
     "allowed_inputs": {
       "type": "array",
       "items": {
-        "type": "string",
-        "minLength": 1
+        "$ref": "#/$defs/artifactPath"
       }
     },
     "required_outputs": {
       "type": "array",
       "items": {
-        "type": "string",
-        "minLength": 1
+        "$ref": "#/$defs/artifactPath"
       }
     },
     "acceptance_criteria": {
@@ -83,8 +98,14 @@
         "pending",
         "running",
         "completed",
-        "failed"
+        "failed",
+        "revoked"
       ]
+    },
+    "revocation_reason": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
     }
   },
   "allOf": [
@@ -120,6 +141,23 @@
             "review_of"
           ]
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "revoked"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "revocation_reason"
+        ]
       }
     }
   ],

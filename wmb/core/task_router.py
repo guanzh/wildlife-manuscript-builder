@@ -31,8 +31,17 @@ from wmb.core.state_store import (
 _IDENTIFIER_ATTEMPTS = 1_000
 _LOCK_ATTEMPTS = 1_000
 _LOCK_DELAY_SECONDS = 0.001
+_LOCK_RELEASE_ATTEMPTS = 3
+_RECONCILE_ATTEMPTS = 3
 _TASK_ID_PATTERN = re.compile(r"task-[A-Za-z0-9_-]+")
 _CAPABILITY_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*")
+_UNSAFE_PORTABLE_PATH_CHARACTERS = frozenset('<>"|?*')
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"aux", "con", "nul", "prn"}
+    | {f"com{number}" for number in range(1, 10)}
+    | {f"lpt{number}" for number in range(1, 10)}
+    | {"com¹", "com²", "com³", "lpt¹", "lpt²", "lpt³"}
+)
 _ARTIFACT_CLASSIFICATIONS = frozenset(
     {
         "manuscript",
@@ -93,6 +102,7 @@ _DATA_TYPE_CAPABILITIES = {
     "behavioral_ecology": {"behavioral_ecologist"},
     "disease_ecology": {"disease_ecologist"},
     "molecular_ecology": {"molecular_ecologist"},
+    "molecular_ecology_edna_metabarcoding": {"molecular_ecologist"},
     "edna": {"molecular_ecologist"},
     "metabarcoding": {"molecular_ecologist"},
     "urban_ecology": {"urban_ecologist"},
@@ -140,6 +150,7 @@ _METHOD_CAPABILITIES = {
     "joint_species_model": {"community_modeler"},
     "joint_species_models": {"community_modeler"},
     "multivariate_community_model": {"community_modeler"},
+    "multivariate_community_models": {"community_modeler"},
     "ordination": {"community_modeler"},
     "baci": {"intervention_statistician"},
     "did": {"intervention_statistician"},
@@ -299,6 +310,19 @@ def _atomic_write_text(path: Path, content: str) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
+def _release_owned_project_lock(
+    lock_path: Path,
+    lock_data: bytes,
+    lock_identity: tuple[int, int],
+) -> None:
+    for attempt in range(_LOCK_RELEASE_ATTEMPTS):
+        if _remove_lock_if_unchanged(lock_path, lock_data, lock_identity):
+            return
+        if attempt + 1 < _LOCK_RELEASE_ATTEMPTS:
+            time.sleep(_LOCK_DELAY_SECONDS)
+    raise RuntimeError(f"could not release owned project lock: {lock_path}")
+
+
 @contextmanager
 def _owned_project_lock(lock_path: Path):
     lock_data = json.dumps(
@@ -342,12 +366,12 @@ def _owned_project_lock(lock_path: Path):
                 os.close(descriptor)
             except OSError:
                 pass
-            _remove_lock_if_unchanged(lock_path, lock_data, created_identity)
+            _release_owned_project_lock(lock_path, lock_data, created_identity)
             raise
         try:
             os.close(descriptor)
         except Exception:
-            _remove_lock_if_unchanged(lock_path, lock_data, created_identity)
+            _release_owned_project_lock(lock_path, lock_data, created_identity)
             raise
         lock_identity = created_identity
         break
@@ -357,7 +381,7 @@ def _owned_project_lock(lock_path: Path):
     try:
         yield
     finally:
-        _remove_lock_if_unchanged(lock_path, lock_data, lock_identity)
+        _release_owned_project_lock(lock_path, lock_data, lock_identity)
 
 
 def _conservative_classification(existing: str | None, requested: str) -> str:
@@ -449,21 +473,23 @@ class TaskRouter:
         classification = _token(classification, "classification")
         if classification not in _ARTIFACT_CLASSIFICATIONS:
             raise ValueError(f"unknown artifact classification: {classification}")
-        with _owned_project_lock(self._artifact_manifest_lock_path):
-            manifest = self._load_artifact_manifest()
-            existing = manifest["artifacts"].get(artifact_id, {}).get(
-                "classification"
-            )
-            manifest["artifacts"][artifact_id] = {
-                "classification": _conservative_classification(
-                    existing,
-                    classification,
-                ),
-            }
-            _atomic_write_text(
-                self._artifact_manifest_path,
-                yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
-            )
+        # Global lock order: task registry, then artifact manifest.
+        with _owned_project_lock(self._task_registry_lock_path):
+            with _owned_project_lock(self._artifact_manifest_lock_path):
+                manifest = self._load_artifact_manifest()
+                existing = manifest["artifacts"].get(artifact_id, {}).get(
+                    "classification"
+                )
+                effective = _conservative_classification(existing, classification)
+                manifest["artifacts"][artifact_id] = {
+                    "classification": effective,
+                }
+                if effective in _RESTRICTED_CLASSIFICATIONS:
+                    self._revoke_unauthorized_tasks(artifact_id, effective)
+                _atomic_write_text(
+                    self._artifact_manifest_path,
+                    yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
+                )
         return dict(manifest["artifacts"][artifact_id])
 
     def register_artifact(
@@ -557,6 +583,17 @@ class TaskRouter:
                     raise ValueError(
                         f"capability {capability} cannot access restricted inputs: "
                         + ", ".join(restricted)
+                    )
+                restricted_outputs = [
+                    item
+                    for item in outputs
+                    if self._classification_from_manifest(manifest, item)
+                    in _RESTRICTED_CLASSIFICATIONS
+                ]
+                if restricted_outputs and capability not in _SENSITIVE_CAPABILITIES:
+                    raise ValueError(
+                        f"capability {capability} cannot write restricted outputs: "
+                        + ", ".join(restricted_outputs)
                     )
 
                 return self._persist_new_task(
@@ -700,6 +737,41 @@ class TaskRouter:
             contexts.add(context_id)
         return contexts
 
+    def _revoke_unauthorized_tasks(
+        self,
+        artifact_id: str,
+        classification: str,
+    ) -> None:
+        reason = (
+            f"authorization revoked: artifact {artifact_id} classified "
+            f"{classification}"
+        )
+        for path in self.project.tasks_dir.glob("task-*.yaml"):
+            if not path.is_file():
+                raise ValueError(f"task record is not a file: {path}")
+            try:
+                task = yaml.safe_load(path.read_text(encoding="utf-8"))
+                validate_contract("task", task)
+            except Exception as exc:
+                raise ValueError(f"cannot reauthorize existing task: {path}") from exc
+            if (
+                task["status"] not in {"pending", "running"}
+                or task["capability"] in _SENSITIVE_CAPABILITIES
+                or artifact_id
+                not in {*task["allowed_inputs"], *task["required_outputs"]}
+            ):
+                continue
+            revoked = {
+                **task,
+                "status": "revoked",
+                "revocation_reason": reason,
+            }
+            validate_contract("task", revoked)
+            _atomic_write_text(
+                path,
+                yaml.safe_dump(revoked, allow_unicode=True, sort_keys=False),
+            )
+
     def _new_context(self, excluded: Iterable[str]) -> str:
         excluded_contexts = set(excluded)
         for _ in range(_IDENTIFIER_ATTEMPTS):
@@ -716,45 +788,64 @@ class TaskRouter:
             if os.path.lexists(path):
                 continue
             content = yaml.safe_dump(task, allow_unicode=True, sort_keys=False)
-            _write_once(path, content)
+            try:
+                _write_once(path, content)
+            except Exception:
+                owned = self._reconcile_published_task(path, task)
+                if owned is not None:
+                    return owned
+                raise
             try:
                 persisted = path.read_text(encoding="utf-8")
-            except (FileNotFoundError, IsADirectoryError, PermissionError):
-                owned = self._task_owned_by(base_task)
+            except OSError:
+                owned = self._reconcile_published_task(path, task)
                 if owned is not None:
                     return owned
                 continue
             if persisted == content:
                 return task
-            owned = self._task_owned_by(base_task)
+            owned = self._reconcile_published_task(path, task)
             if owned is not None:
                 return owned
         raise FileExistsError("could not allocate a unique task_id")
 
-    def _task_owned_by(self, base_task: Mapping[str, Any]) -> dict[str, Any] | None:
-        creation_token = base_task["creation_token"]
-        owned: dict[str, Any] | None = None
-        for path in self.project.tasks_dir.glob("task-*.yaml"):
+    def _reconcile_published_task(
+        self,
+        path: Path,
+        expected: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        last_error: Exception | None = None
+        for attempt in range(_RECONCILE_ATTEMPTS):
             try:
                 payload = yaml.safe_load(path.read_text(encoding="utf-8"))
                 validate_contract("task", payload)
-            except FileNotFoundError:
+            except OSError as exc:
+                last_error = exc
+                if attempt + 1 < _RECONCILE_ATTEMPTS:
+                    time.sleep(_LOCK_DELAY_SECONDS)
                 continue
             except Exception as exc:
                 raise ValueError(f"cannot reconcile persisted task: {path}") from exc
-            if payload.get("creation_token") != creation_token:
-                continue
-            if owned is not None or any(
-                payload.get(field) != value for field, value in base_task.items()
-            ):
-                raise ValueError("task creation token does not identify one owned task")
-            owned = payload
-        return owned
+            if payload.get("creation_token") != expected["creation_token"]:
+                return None
+            if payload != expected:
+                raise ValueError(
+                    "task creation token does not identify the expected owned task"
+                )
+            return payload
+        if os.path.lexists(path):
+            raise RuntimeError(
+                f"could not reconcile published task {path} after write: "
+                f"{expected['creation_token']}"
+            ) from last_error
+        return None
 
     def _artifact_list(self, values: object, field: str) -> list[str]:
+        if isinstance(values, str) or not isinstance(values, Iterable):
+            raise ValueError(f"{field} must be a list of non-blank strings")
         canonical: list[str] = []
         seen: set[str] = set()
-        for value in _string_list(values, field):
+        for value in values:
             artifact_id = self._canonical_artifact_id(value, field)
             if artifact_id not in seen:
                 canonical.append(artifact_id)
@@ -762,10 +853,31 @@ class TaskRouter:
         return canonical
 
     def _canonical_artifact_id(self, value: object, field: str) -> str:
-        artifact_id = self._nonblank(value, field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field} must be a non-blank string")
+        if value != value.strip():
+            raise ValueError(f"{field} must not have surrounding whitespace")
+        artifact_id = value
+        if os.name != "nt" and "\\" in artifact_id:
+            raise ValueError(f"{field} must use portable path separators")
         candidate = Path(artifact_id)
         if any(part == os.pardir for part in candidate.parts):
             raise ValueError(f"{field} must not contain path traversal")
+        path_parts = candidate.parts[1:] if candidate.anchor else candidate.parts
+        for part in path_parts:
+            reserved_base = part.split(".", 1)[0].rstrip(" ").casefold()
+            if (
+                not part
+                or part.endswith((" ", "."))
+                or ":" in part
+                or any(
+                    character in _UNSAFE_PORTABLE_PATH_CHARACTERS
+                    or ord(character) < 32
+                    for character in part
+                )
+                or reserved_base in _WINDOWS_RESERVED_NAMES
+            ):
+                raise ValueError(f"{field} contains an unsafe path component")
         try:
             resolved = (
                 candidate.resolve()

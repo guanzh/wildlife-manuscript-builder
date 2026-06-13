@@ -22,7 +22,7 @@ VALID_CONTRACTS = {
         "reason": "data contract reconciled",
     },
     "task": {
-        "task_id": "analysis-001",
+        "task_id": "task-analysis-001",
         "capability": "occupancy_statistician",
         "role": "worker",
         "context_id": "context-analysis-001",
@@ -358,6 +358,64 @@ def test_task_contract_cannot_bypass_reviewer_policy_with_capability_case():
 
     with pytest.raises(ContractError, match="capability"):
         validate_contract("task", payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("task_id", "analysis-001"),
+        ("task_id", "task-../outside"),
+        ("task_id", "task-a/b"),
+        ("task_id", "task-a\n"),
+        ("review_of", "analysis-001"),
+        ("review_of", "task-../outside"),
+    ],
+)
+def test_task_contract_rejects_unsafe_task_ids(field, value):
+    payload = {
+        **VALID_CONTRACTS["task"],
+        "capability": "statistical_reviewer",
+        "role": "reviewer",
+        "review_of": "task-worker",
+        field: value,
+    }
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract("task", payload)
+
+
+@pytest.mark.parametrize(
+    "artifact_id",
+    [
+        "../outside.csv",
+        "data/../outside.csv",
+        "/outside.csv",
+        "C:/outside.csv",
+        "data\\outside.csv",
+        "data//outside.csv",
+        "data/report.csv.",
+        "data/report.csv ",
+        "data/CON.txt",
+        "data/CON .txt",
+        "data/bad?.csv",
+    ],
+)
+@pytest.mark.parametrize("field", ["allowed_inputs", "required_outputs"])
+def test_task_contract_rejects_unsafe_artifact_paths(field, artifact_id):
+    payload = {**VALID_CONTRACTS["task"], field: [artifact_id]}
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract("task", payload)
+
+
+def test_revoked_task_contract_requires_reason():
+    payload = {**VALID_CONTRACTS["task"], "status": "revoked"}
+
+    with pytest.raises(ContractError, match="revocation_reason"):
+        validate_contract("task", payload)
+
+    payload["revocation_reason"] = "artifact ordinary.bin became restricted"
+    validate_contract("task", payload)
 
 
 @pytest.mark.parametrize("entry", ["", 42])
