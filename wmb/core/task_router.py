@@ -374,7 +374,7 @@ class TaskRouter:
         self.project = project
         self._artifact_manifest_path = project.artifacts_dir / "manifest.yaml"
         self._artifact_manifest_lock_path = project.artifacts_dir / ".manifest.lock"
-        self._task_context_lock_path = project.tasks_dir / ".context.lock"
+        self._task_registry_lock_path = project.tasks_dir / ".registry.lock"
 
     def select_capabilities(
         self,
@@ -479,52 +479,62 @@ class TaskRouter:
         )
 
         reviewer = _is_reviewer(capability)
-        reviewed_worker: dict[str, Any] | None = None
-        if reviewer:
-            reviewed_worker = self._load_reviewed_worker(review_of)
-            worker_outputs = set(reviewed_worker["required_outputs"])
-            unauthorized = sorted(
-                item
-                for item in inputs
-                if item not in worker_outputs
-                and self._artifact_classification(item)
-                not in _REVIEWER_SUPPLEMENTAL_CLASSIFICATIONS
-            )
-            if unauthorized:
-                raise ValueError(
-                    "reviewer allowed_inputs contain unauthorized artifacts: "
-                    + ", ".join(unauthorized)
-                )
-        elif review_of is not None:
+        if not reviewer and review_of is not None:
             raise ValueError("review_of requires a reviewer capability")
-
-        restricted = [
-            item
-            for item in inputs
-            if self._artifact_classification(item) in _RESTRICTED_CLASSIFICATIONS
-        ]
-        if restricted and capability not in _SENSITIVE_CAPABILITIES:
-            raise ValueError(
-                f"capability {capability} cannot access restricted inputs: "
-                + ", ".join(restricted)
-            )
 
         supplied_context = (
             self._nonblank(context_id, "context_id")
             if context_id is not None
             else None
         )
-        if reviewer:
-            with _owned_project_lock(self._task_context_lock_path):
-                existing_contexts = self._existing_task_contexts()
-                if supplied_context in existing_contexts:
-                    raise ValueError(
-                        "reviewer cannot reuse an existing task context"
-                    )
+        # Global lock order: task registry, then artifact manifest.
+        with _owned_project_lock(self._task_registry_lock_path):
+            existing_contexts = self._existing_task_contexts()
+            if supplied_context in existing_contexts:
+                raise ValueError("task cannot reuse an existing task context")
+
+            reviewed_worker: dict[str, Any] | None = None
+            if reviewer:
+                reviewed_worker = self._load_reviewed_worker(review_of)
                 excluded_contexts = set(existing_contexts)
                 if supplied_context is not None:
                     excluded_contexts.add(supplied_context)
                 context_id = self._new_context(excluded_contexts)
+            else:
+                context_id = supplied_context or self._new_context(existing_contexts)
+
+            if context_id in existing_contexts:
+                raise ValueError("task cannot reuse an existing task context")
+
+            with _owned_project_lock(self._artifact_manifest_lock_path):
+                manifest = self._load_artifact_manifest()
+                if reviewed_worker is not None:
+                    worker_outputs = set(reviewed_worker["required_outputs"])
+                    unauthorized = sorted(
+                        item
+                        for item in inputs
+                        if item not in worker_outputs
+                        and self._classification_from_manifest(manifest, item)
+                        not in _REVIEWER_SUPPLEMENTAL_CLASSIFICATIONS
+                    )
+                    if unauthorized:
+                        raise ValueError(
+                            "reviewer allowed_inputs contain unauthorized artifacts: "
+                            + ", ".join(unauthorized)
+                        )
+
+                restricted = [
+                    item
+                    for item in inputs
+                    if self._classification_from_manifest(manifest, item)
+                    in _RESTRICTED_CLASSIFICATIONS
+                ]
+                if restricted and capability not in _SENSITIVE_CAPABILITIES:
+                    raise ValueError(
+                        f"capability {capability} cannot access restricted inputs: "
+                        + ", ".join(restricted)
+                    )
+
                 return self._persist_new_task(
                     self._task_payload(
                         capability,
@@ -538,21 +548,6 @@ class TaskRouter:
                         reviewed_worker,
                     )
                 )
-
-        context_id = supplied_context or self._new_context(set())
-        return self._persist_new_task(
-            self._task_payload(
-                capability,
-                objective,
-                inputs,
-                outputs,
-                criteria,
-                prohibited,
-                max_attempts,
-                context_id,
-                reviewed_worker,
-            )
-        )
 
     def _task_payload(
         self,
@@ -632,10 +627,15 @@ class TaskRouter:
     def _artifact_classification(self, artifact_id: str) -> str | None:
         with _owned_project_lock(self._artifact_manifest_lock_path):
             manifest = self._load_artifact_manifest()
-            record = manifest["artifacts"].get(artifact_id)
-            classification = (
-                record["classification"] if record is not None else None
-            )
+            return self._classification_from_manifest(manifest, artifact_id)
+
+    @staticmethod
+    def _classification_from_manifest(
+        manifest: Mapping[str, Any],
+        artifact_id: str,
+    ) -> str | None:
+        record = manifest["artifacts"].get(artifact_id)
+        classification = record["classification"] if record is not None else None
         if _is_restricted(artifact_id):
             return "restricted"
         return classification

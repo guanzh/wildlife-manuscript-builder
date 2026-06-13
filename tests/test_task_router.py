@@ -1,7 +1,7 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from types import SimpleNamespace
-from threading import Barrier, Event, Lock
+from threading import Event, Lock
 
 import pytest
 import yaml
@@ -503,6 +503,101 @@ def test_concurrent_artifact_classification_conflict_keeps_restricted(
     assert manifest["artifacts"][artifact_id]["classification"] == "restricted"
 
 
+def test_task_persistence_is_atomic_with_artifact_reclassification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    task_router = TaskRouter(project)
+    classification_router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    task_router.register_artifact(artifact_id, "verified")
+    persistence_started = Event()
+    release_persistence = Event()
+    classification_started = Event()
+    real_persist = task_router._persist_new_task
+
+    def blocking_persist(task):
+        persistence_started.set()
+        release_persistence.wait(timeout=5)
+        return real_persist(task)
+
+    def reclassify():
+        classification_started.set()
+        return classification_router.classify_artifact(artifact_id, "restricted")
+
+    monkeypatch.setattr(task_router, "_persist_new_task", blocking_persist)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        task_future = pool.submit(
+            task_router.create_task,
+            "manuscript_writer",
+            "Draft",
+            [artifact_id],
+            ["draft.md"],
+        )
+        assert persistence_started.wait(timeout=5)
+        classification_future = pool.submit(reclassify)
+        assert classification_started.wait(timeout=5)
+        try:
+            with pytest.raises(FutureTimeoutError):
+                classification_future.result(timeout=0.2)
+        finally:
+            release_persistence.set()
+
+        task_future.result(timeout=5)
+        classification_future.result(timeout=5)
+
+
+def test_reclassification_that_wins_manifest_lock_blocks_general_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    classification_router = TaskRouter(project)
+    task_router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    classification_router.register_artifact(artifact_id, "verified")
+    restricted_written = Event()
+    release_classification = Event()
+    real_atomic_write = task_router_module._atomic_write_text
+
+    def hold_restricted_manifest_lock(path, content):
+        real_atomic_write(path, content)
+        restricted_written.set()
+        release_classification.wait(timeout=5)
+
+    monkeypatch.setattr(
+        task_router_module,
+        "_atomic_write_text",
+        hold_restricted_manifest_lock,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        classification_future = pool.submit(
+            classification_router.classify_artifact,
+            artifact_id,
+            "restricted",
+        )
+        assert restricted_written.wait(timeout=5)
+        task_future = pool.submit(
+            task_router.create_task,
+            "manuscript_writer",
+            "Draft",
+            [artifact_id],
+            ["draft.md"],
+        )
+        try:
+            with pytest.raises(FutureTimeoutError):
+                task_future.result(timeout=0.2)
+        finally:
+            release_classification.set()
+
+        classification_future.result(timeout=5)
+        with pytest.raises(ValueError, match="restricted"):
+            task_future.result(timeout=5)
+
+
 @pytest.mark.parametrize("capability", ["manuscript_writer", "statistical_reviewer"])
 def test_general_capabilities_cannot_access_sensitive_inputs(
     tmp_path: Path,
@@ -559,8 +654,18 @@ def test_task_id_collision_never_overwrites_existing_task(
     monkeypatch: pytest.MonkeyPatch,
 ):
     project = initialize_project(tmp_path)
+    existing = TaskRouter(project).create_task(
+        "manuscript_writer",
+        "Existing draft",
+        [],
+        ["existing.md"],
+    )
     collision_path = project.tasks_dir / "task-collision.yaml"
-    original = "owner: existing\n"
+    original = yaml.safe_dump(
+        {**existing, "task_id": "task-collision"},
+        allow_unicode=True,
+        sort_keys=False,
+    )
     collision_path.write_text(original, encoding="utf-8")
     identifiers = iter(
         [
@@ -588,24 +693,8 @@ def test_task_id_collision_never_overwrites_existing_task(
 
 def test_concurrent_same_content_tasks_get_distinct_task_ids(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ):
     router = TaskRouter(initialize_project(tmp_path))
-    first_calls = Barrier(2)
-    counter_lock = Lock()
-    calls = 0
-
-    def colliding_uuid():
-        nonlocal calls
-        with counter_lock:
-            calls += 1
-            call = calls
-        if call <= 2:
-            first_calls.wait(timeout=5)
-            return SimpleNamespace(hex="collision")
-        return SimpleNamespace(hex=f"unique-{call}")
-
-    monkeypatch.setattr("wmb.core.task_router.uuid4", colliding_uuid)
 
     def create():
         return router.create_task(
@@ -613,10 +702,77 @@ def test_concurrent_same_content_tasks_get_distinct_task_ids(
             "Draft",
             [],
             ["draft.md"],
-            context_id="context-shared-worker",
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         tasks = list(pool.map(lambda _: create(), range(2)))
 
     assert len({task["task_id"] for task in tasks}) == 2
+    assert len({task["context_id"] for task in tasks}) == 2
+
+
+def test_worker_cannot_claim_context_while_reviewer_persistence_is_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    reviewer_router = TaskRouter(project)
+    worker_router = TaskRouter(project)
+    reviewed_worker = reviewer_router.create_task(
+        "manuscript_writer",
+        "Draft reviewed artifact",
+        [],
+        ["reviewed.md"],
+    )
+    shared_context = "context-pending-reviewer"
+    persistence_started = Event()
+    release_persistence = Event()
+    real_persist = reviewer_router._persist_new_task
+
+    monkeypatch.setattr(
+        reviewer_router,
+        "_new_context",
+        lambda excluded: shared_context,
+    )
+
+    def blocking_persist(task):
+        persistence_started.set()
+        release_persistence.wait(timeout=5)
+        return real_persist(task)
+
+    monkeypatch.setattr(reviewer_router, "_persist_new_task", blocking_persist)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reviewer_future = pool.submit(
+            reviewer_router.create_task,
+            "statistical_reviewer",
+            "Review",
+            ["reviewed.md"],
+            ["review.yaml"],
+            reviewed_worker["task_id"],
+        )
+        assert persistence_started.wait(timeout=5)
+        worker_future = pool.submit(
+            worker_router.create_task,
+            "manuscript_writer",
+            "Draft another artifact",
+            [],
+            ["other.md"],
+            context_id=shared_context,
+        )
+        try:
+            with pytest.raises(FutureTimeoutError):
+                worker_future.result(timeout=0.2)
+        finally:
+            release_persistence.set()
+
+        reviewer = reviewer_future.result(timeout=5)
+        with pytest.raises(ValueError, match="existing task context"):
+            worker_future.result(timeout=5)
+
+    persisted_contexts = {
+        _load_yaml(path)["context_id"]
+        for path in project.tasks_dir.glob("task-*.yaml")
+    }
+    assert reviewer["context_id"] == shared_context
+    assert len(persisted_contexts) == len(list(project.tasks_dir.glob("task-*.yaml")))
