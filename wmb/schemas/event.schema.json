@@ -5,6 +5,7 @@
   "type": "object",
   "required": [
     "event_id",
+    "run_id",
     "timestamp",
     "actor",
     "event_type",
@@ -16,19 +17,21 @@
   "properties": {
     "event_id": {
       "type": "string",
-      "minLength": 1
+      "pattern": "\\S"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "\\S"
     },
     "timestamp": {
       "type": "string",
       "format": "date-time"
     },
     "actor": {
-      "type": "string",
-      "minLength": 1
+      "const": "orchestrator"
     },
     "event_type": {
-      "type": "string",
-      "minLength": 1
+      "const": "transition"
     },
     "from_status": {
       "$ref": "#/$defs/run_status"
@@ -52,14 +55,14 @@
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1
+        "pattern": "\\S"
       }
     },
     "artifact_ids": {
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1
+        "pattern": "\\S"
       }
     },
     "artifact_hashes": {
@@ -71,8 +74,64 @@
         "type": "string",
         "minLength": 1
       }
+    },
+    "unblock_conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "\\S"
+      }
+    },
+    "deliverable": {
+      "type": "string",
+      "pattern": "\\S"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "BLOCK"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "unblock_conditions"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "unblock_conditions"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "DOWNGRADE"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "deliverable"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "deliverable"
+          ]
+        }
+      }
+    }
+  ],
   "$defs": {
     "run_status": {
       "enum": [

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import socket
 import time
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
@@ -29,6 +31,136 @@ _LOCK_STALE_SECONDS = 30.0
 
 class StateConsistencyError(RuntimeError):
     """Raised when canonical run state and its event projection disagree."""
+
+
+def _exclusive_flags() -> int:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_BINARY"):
+        flags |= os.O_BINARY
+    return flags
+
+
+def _write_descriptor(descriptor: int, content: bytes) -> None:
+    written = 0
+    while written < len(content):
+        count = os.write(descriptor, content[written:])
+        if count == 0:
+            raise OSError("zero-byte write while acquiring state writer lock")
+        written += count
+    os.fsync(descriptor)
+
+
+def _lock_snapshot(lock_path: Path) -> tuple[bytes, tuple[int, int], float] | None:
+    try:
+        with lock_path.open("rb") as lock_file:
+            stat = os.fstat(lock_file.fileno())
+            return (
+                lock_file.read(),
+                (stat.st_dev, stat.st_ino),
+                stat.st_mtime,
+            )
+    except (FileNotFoundError, PermissionError):
+        return None
+
+
+def _remove_lock_if_unchanged(
+    lock_path: Path,
+    expected_data: bytes,
+    expected_identity: tuple[int, int],
+) -> bool:
+    snapshot = _lock_snapshot(lock_path)
+    if snapshot is None or snapshot[:2] != (expected_data, expected_identity):
+        return False
+    try:
+        lock_path.unlink()
+    except (FileNotFoundError, PermissionError):
+        return False
+    return True
+
+
+def _lock_owner(lock_data: bytes) -> tuple[int, str, str] | None:
+    try:
+        payload = json.loads(lock_data.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    pid = payload.get("pid")
+    host = payload.get("host")
+    token = payload.get("token")
+    created_at = payload.get("created_at")
+    if (
+        isinstance(pid, bool)
+        or not isinstance(pid, int)
+        or pid <= 0
+        or not isinstance(host, str)
+        or not host.strip()
+        or not isinstance(token, str)
+        or not token.strip()
+        or isinstance(created_at, bool)
+        or not isinstance(created_at, (int, float))
+        or not math.isfinite(created_at)
+    ):
+        return None
+    return pid, host, token
+
+
+def _pid_is_alive(pid: int) -> bool | None:
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        process_query_limited_information = 0x1000
+        error_access_denied = 5
+        error_invalid_parameter = 87
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(
+            process_query_limited_information,
+            False,
+            pid,
+        )
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        error = ctypes.get_last_error()
+        if error == error_invalid_parameter:
+            return False
+        if error == error_access_denied:
+            return True
+        return None
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
+
+
+def _stale_lock_is_recoverable(
+    lock_data: bytes,
+    modified_at: float,
+) -> bool:
+    if time.time() - modified_at < _LOCK_STALE_SECONDS:
+        return False
+    owner = _lock_owner(lock_data)
+    if owner is None:
+        return True
+    pid, host, _ = owner
+    return host == socket.gethostname() and _pid_is_alive(pid) is False
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -158,6 +290,7 @@ class StateStore:
 
             event: dict[str, Any] = {
                 "event_id": f"event-{uuid4().hex}",
+                "run_id": run["run_id"],
                 "timestamp": datetime.now(timezone.utc)
                 .isoformat()
                 .replace("+00:00", "Z"),
@@ -248,7 +381,17 @@ class StateStore:
             )
 
         previous_to: object | None = None
+        event_ids: set[str] = set()
         for index, event in enumerate(events):
+            if event["run_id"] != run["run_id"]:
+                raise StateConsistencyError(
+                    "event ledger run_id does not match the canonical run"
+                )
+            if event["event_id"] in event_ids:
+                raise StateConsistencyError(
+                    f"duplicate event_id in event ledger: {event['event_id']}"
+                )
+            event_ids.add(event["event_id"])
             if index == 0 and event["from_status"] != "intake":
                 raise StateConsistencyError(
                     "event ledger does not begin from the initial intake state"
@@ -414,46 +557,74 @@ class StateStore:
 
     @contextmanager
     def _locked(self):
-        token = json.dumps(
-            {"pid": os.getpid(), "created_at": time.time(), "token": uuid4().hex},
+        lock_data = json.dumps(
+            {
+                "pid": os.getpid(),
+                "host": socket.gethostname(),
+                "created_at": time.time(),
+                "token": uuid4().hex,
+            },
             sort_keys=True,
-        )
-        acquired = False
+        ).encode("utf-8")
+        lock_identity: tuple[int, int] | None = None
         for _ in range(_LOCK_ATTEMPTS):
             try:
                 descriptor = os.open(
                     self._lock_path,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    _exclusive_flags(),
                     0o600,
                 )
             except FileExistsError:
-                try:
-                    age = time.time() - self._lock_path.stat().st_mtime
-                except FileNotFoundError:
+                snapshot = _lock_snapshot(self._lock_path)
+                if snapshot is None:
                     continue
-                if age >= _LOCK_STALE_SECONDS:
-                    self._lock_path.unlink(missing_ok=True)
+                existing_data, existing_identity, modified_at = snapshot
+                if _stale_lock_is_recoverable(existing_data, modified_at):
+                    _remove_lock_if_unchanged(
+                        self._lock_path,
+                        existing_data,
+                        existing_identity,
+                    )
                     continue
                 time.sleep(_LOCK_DELAY_SECONDS)
                 continue
+            created = os.fstat(descriptor)
+            created_identity = (created.st_dev, created.st_ino)
             try:
-                os.write(descriptor, token.encode("utf-8"))
-                os.fsync(descriptor)
-            finally:
+                _write_descriptor(descriptor, lock_data)
+            except Exception:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+                _remove_lock_if_unchanged(
+                    self._lock_path,
+                    lock_data,
+                    created_identity,
+                )
+                raise
+            try:
                 os.close(descriptor)
-            acquired = True
+            except Exception:
+                _remove_lock_if_unchanged(
+                    self._lock_path,
+                    lock_data,
+                    created_identity,
+                )
+                raise
+            lock_identity = created_identity
             break
-        if not acquired:
+        if lock_identity is None:
             raise TimeoutError("timed out acquiring canonical state writer lock")
 
         try:
             yield
         finally:
-            try:
-                if self._lock_path.read_text(encoding="utf-8") == token:
-                    self._lock_path.unlink(missing_ok=True)
-            except FileNotFoundError:
-                pass
+            _remove_lock_if_unchanged(
+                self._lock_path,
+                lock_data,
+                lock_identity,
+            )
 
 
 __all__ = ["IllegalTransition", "StateConsistencyError", "StateStore"]

@@ -12,6 +12,7 @@ VALID_CONTRACTS = {
     },
     "event": {
         "event_id": "event-001",
+        "run_id": "run-001",
         "timestamp": "2026-06-12T09:00:00Z",
         "actor": "orchestrator",
         "event_type": "transition",
@@ -149,6 +150,14 @@ def test_event_requires_canonical_decision():
         validate_contract("event", payload)
 
 
+def test_event_requires_run_id():
+    payload = {**VALID_CONTRACTS["event"]}
+    del payload["run_id"]
+
+    with pytest.raises(ContractError, match="run_id"):
+        validate_contract("event", payload)
+
+
 @pytest.mark.parametrize("decision", ["PIVOT", "proceed", ""])
 def test_event_rejects_noncanonical_decision(decision):
     payload = {**VALID_CONTRACTS["event"], "decision": decision}
@@ -162,6 +171,72 @@ def test_event_rejects_whitespace_reason():
 
     with pytest.raises(ContractError, match="reason"):
         validate_contract("event", payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("actor", "worker"),
+        ("event_type", "recommendation"),
+    ],
+)
+def test_event_requires_canonical_orchestrator_transition(field, value):
+    payload = {**VALID_CONTRACTS["event"], field: value}
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract("event", payload)
+
+
+def test_block_event_requires_nonempty_unblock_conditions():
+    payload = {
+        **VALID_CONTRACTS["event"],
+        "to_status": "blocked",
+        "decision": "BLOCK",
+    }
+
+    with pytest.raises(ContractError, match="unblock_conditions"):
+        validate_contract("event", payload)
+
+    payload["unblock_conditions"] = ["reconcile source data"]
+    validate_contract("event", payload)
+
+
+def test_downgrade_event_requires_nonblank_deliverable():
+    payload = {
+        **VALID_CONTRACTS["event"],
+        "to_status": "downgraded",
+        "decision": "DOWNGRADE",
+    }
+
+    with pytest.raises(ContractError, match="deliverable"):
+        validate_contract("event", payload)
+
+    payload["deliverable"] = "monitoring baseline"
+    validate_contract("event", payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("unblock_conditions", ["not applicable"]),
+        ("deliverable", "not applicable"),
+    ],
+)
+def test_event_rejects_inappropriate_conditional_fields(field, value):
+    payload = {**VALID_CONTRACTS["event"], field: value}
+
+    with pytest.raises(ContractError, match=field):
+        validate_contract("event", payload)
+
+
+def test_event_allows_intended_additive_metadata():
+    payload = {
+        **VALID_CONTRACTS["event"],
+        "artifact_hashes": {"analysis.csv": "sha256:abc"},
+        "adapter_metadata": {"job_id": "42"},
+    }
+
+    validate_contract("event", payload)
 
 
 @pytest.mark.parametrize(

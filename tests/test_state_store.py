@@ -1,9 +1,15 @@
+from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from pathlib import Path
+import socket
+import threading
+import time
 
 import pytest
 import yaml
 
+import wmb.core.state_store as state_store_module
 from wmb.core.project import initialize_project
 from wmb.core.state_store import (
     IllegalTransition,
@@ -79,6 +85,7 @@ def test_state_store_appends_event_for_legal_transition(tmp_path: Path):
     assert event["from_status"] == "intake"
     assert event["to_status"] == "awaiting_research_direction"
     assert event["decision"] == "PROCEED"
+    assert event["run_id"] == store.load_run()["run_id"]
     assert event["task_ids"] == ["task-1"]
     assert event["artifact_ids"] == ["artifact-1"]
     assert store.load_run()["status"] == "awaiting_research_direction"
@@ -394,6 +401,150 @@ def test_pending_transition_is_recovered_after_failed_rollback(
     assert _events(project.events_log) == []
 
 
+def test_writer_lock_records_owner_and_releases_only_unchanged_lock(tmp_path: Path):
+    store = StateStore(initialize_project(tmp_path))
+
+    with store._locked():
+        lock = json.loads(store._lock_path.read_text(encoding="utf-8"))
+        assert lock["pid"] == os.getpid()
+        assert lock["host"] == socket.gethostname()
+        assert lock["token"]
+        replacement = {**lock, "token": "replacement-owner"}
+        store._lock_path.write_text(json.dumps(replacement), encoding="utf-8")
+
+    assert json.loads(store._lock_path.read_text(encoding="utf-8")) == replacement
+    store._lock_path.unlink()
+
+
+def test_failed_lock_record_write_releases_unchanged_owned_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = StateStore(initialize_project(tmp_path))
+    real_write_descriptor = state_store_module._write_descriptor
+
+    def fail_after_write(descriptor, content):
+        real_write_descriptor(descriptor, content)
+        raise OSError("simulated lock fsync failure")
+
+    monkeypatch.setattr(state_store_module, "_write_descriptor", fail_after_write)
+
+    with pytest.raises(OSError, match="lock fsync failure"):
+        with store._locked():
+            pass
+
+    assert not store._lock_path.exists()
+
+
+def test_slow_live_writer_lock_is_not_stolen_by_concurrent_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    first = StateStore(project)
+    second = StateStore(project)
+    entered_write = threading.Event()
+    release_write = threading.Event()
+    real_write_run = first._write_run
+
+    monkeypatch.setattr(state_store_module, "_LOCK_STALE_SECONDS", 0.01)
+    monkeypatch.setattr(state_store_module, "_LOCK_ATTEMPTS", 5_000)
+
+    def slow_write(run):
+        entered_write.set()
+        assert release_write.wait(timeout=2)
+        real_write_run(run)
+
+    monkeypatch.setattr(first, "_write_run", slow_write)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_write = executor.submit(
+            first.transition,
+            actor="orchestrator",
+            to_status="awaiting_research_direction",
+            decision="PROCEED",
+            reason="slow writer owns the lock",
+        )
+        assert entered_write.wait(timeout=1)
+        second_write = executor.submit(
+            second.transition,
+            actor="orchestrator",
+            to_status="awaiting_research_direction",
+            decision="PROCEED",
+            reason="concurrent writer must wait",
+        )
+        try:
+            time.sleep(0.05)
+            assert not second_write.done()
+        finally:
+            release_write.set()
+
+        first_write.result(timeout=2)
+        with pytest.raises(IllegalTransition):
+            second_write.result(timeout=2)
+
+    assert StateStore(project).audit()["event_count"] == 1
+
+
+def test_stale_foreign_host_lock_is_not_recovered_without_proof_owner_is_dead(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = StateStore(initialize_project(tmp_path))
+    lock = {
+        "pid": 2_147_483_647,
+        "host": "unreachable-foreign-host",
+        "created_at": 0,
+        "token": "foreign-owner",
+    }
+    store._lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    os.utime(store._lock_path, (0, 0))
+    monkeypatch.setattr(state_store_module, "_LOCK_ATTEMPTS", 3)
+    monkeypatch.setattr(state_store_module, "_LOCK_DELAY_SECONDS", 0.001)
+    monkeypatch.setattr(state_store_module, "_LOCK_STALE_SECONDS", 0)
+
+    with pytest.raises(TimeoutError):
+        with store._locked():
+            pass
+
+    assert json.loads(store._lock_path.read_text(encoding="utf-8")) == lock
+    store._lock_path.unlink()
+
+
+def test_stale_dead_same_host_lock_is_recovered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = StateStore(initialize_project(tmp_path))
+    lock = {
+        "pid": 2_147_483_647,
+        "host": socket.gethostname(),
+        "created_at": 0,
+        "token": "dead-owner",
+    }
+    store._lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    os.utime(store._lock_path, (0, 0))
+    monkeypatch.setattr(state_store_module, "_LOCK_STALE_SECONDS", 0)
+
+    with store._locked():
+        current = json.loads(store._lock_path.read_text(encoding="utf-8"))
+        assert current["token"] != lock["token"]
+
+    assert not store._lock_path.exists()
+
+
+def test_stale_invalid_lock_is_recovered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    store = StateStore(initialize_project(tmp_path))
+    store._lock_path.write_text("invalid lock", encoding="utf-8")
+    os.utime(store._lock_path, (0, 0))
+    monkeypatch.setattr(state_store_module, "_LOCK_STALE_SECONDS", 0)
+
+    with store._locked():
+        assert store._lock_path.exists()
+
+    assert not store._lock_path.exists()
+
+
 def test_tampered_pending_transition_cannot_rewrite_intake_to_candidate_level_4(
     tmp_path: Path,
 ):
@@ -405,6 +556,7 @@ def test_tampered_pending_transition_cannot_rewrite_intake_to_candidate_level_4(
     candidate_run = {**intake_run, "status": "candidate_level_4"}
     malicious_event = {
         "event_id": "malicious-event",
+        "run_id": intake_run["run_id"],
         "timestamp": "2026-06-13T00:00:00Z",
         "actor": "orchestrator",
         "event_type": "transition",
@@ -453,6 +605,7 @@ def test_pending_recovery_rejects_unproven_event_history_without_changes(
     events_before = project.events_log.read_bytes()
     event = {
         "event_id": "unproven-event",
+        "run_id": intake_run["run_id"],
         "timestamp": "2026-06-13T00:00:00Z",
         "actor": "orchestrator",
         "event_type": "transition",
@@ -530,6 +683,44 @@ def test_transition_rejects_existing_run_event_projection_mismatch(tmp_path: Pat
     )
 
 
+def test_audit_rejects_swapped_event_ledgers_from_other_runs(tmp_path: Path):
+    first_project = initialize_project(tmp_path / "first")
+    second_project = initialize_project(tmp_path / "second")
+    first_store = StateStore(first_project)
+    second_store = StateStore(second_project)
+    for store in (first_store, second_store):
+        store.transition(
+            actor="orchestrator",
+            to_status="awaiting_research_direction",
+            decision="PROCEED",
+            reason="gate passed",
+        )
+    first_events = first_project.events_log.read_bytes()
+    second_events = second_project.events_log.read_bytes()
+    first_project.events_log.write_bytes(second_events)
+    second_project.events_log.write_bytes(first_events)
+
+    with pytest.raises(StateConsistencyError, match="run_id"):
+        first_store.audit()
+    with pytest.raises(StateConsistencyError, match="run_id"):
+        second_store.audit()
+
+
+def test_audit_rejects_duplicate_event_id(tmp_path: Path):
+    project = initialize_project(tmp_path)
+    store = StateStore(project)
+    _advance_to(store, "evidence_and_analysis")
+    events = _events(project.events_log)
+    events[1]["event_id"] = events[0]["event_id"]
+    project.events_log.write_text(
+        "".join(json.dumps(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StateConsistencyError, match="duplicate event_id"):
+        store.audit()
+
+
 def test_audit_rejects_event_without_decision(tmp_path: Path):
     project = initialize_project(tmp_path)
     run = yaml.safe_load(project.run_file.read_text(encoding="utf-8"))
@@ -539,6 +730,7 @@ def test_audit_rejects_event_without_decision(tmp_path: Path):
         json.dumps(
             {
                 "event_id": "legacy-event",
+                "run_id": run["run_id"],
                 "timestamp": "2026-06-13T00:00:00Z",
                 "actor": "orchestrator",
                 "event_type": "transition",
@@ -564,6 +756,7 @@ def test_audit_rejects_event_with_whitespace_reason(tmp_path: Path):
         json.dumps(
             {
                 "event_id": "invalid-reason-event",
+                "run_id": run["run_id"],
                 "timestamp": "2026-06-13T00:00:00Z",
                 "actor": "orchestrator",
                 "event_type": "transition",
@@ -590,6 +783,7 @@ def test_audit_rejects_decision_that_does_not_authorize_transition(tmp_path: Pat
         json.dumps(
             {
                 "event_id": "mismatched-decision-event",
+                "run_id": run["run_id"],
                 "timestamp": "2026-06-13T00:00:00Z",
                 "actor": "orchestrator",
                 "event_type": "transition",
