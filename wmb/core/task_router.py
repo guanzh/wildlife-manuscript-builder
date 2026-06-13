@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import socket
+import time
 from collections.abc import Iterable, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from secrets import token_hex
 from tempfile import NamedTemporaryFile
-from threading import Lock
 from typing import Any
 from uuid import uuid4
 
@@ -17,8 +20,17 @@ import yaml
 from wmb.contracts import validate_contract
 from wmb.core.models import ProjectPaths
 from wmb.core.project import _write_once
+from wmb.core.state_store import (
+    _exclusive_flags as _lock_exclusive_flags,
+    _lock_snapshot,
+    _remove_lock_if_unchanged,
+    _stale_lock_is_recoverable,
+    _write_descriptor as _write_lock_descriptor,
+)
 
 _IDENTIFIER_ATTEMPTS = 1_000
+_LOCK_ATTEMPTS = 1_000
+_LOCK_DELAY_SECONDS = 0.001
 _TASK_ID_PATTERN = re.compile(r"task-[A-Za-z0-9_-]+")
 _ARTIFACT_CLASSIFICATIONS = frozenset(
     {
@@ -273,6 +285,75 @@ def _atomic_write_text(path: Path, content: str) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
+@contextmanager
+def _owned_project_lock(lock_path: Path):
+    lock_data = json.dumps(
+        {
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+            "created_at": time.time(),
+            "token": token_hex(16),
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    lock_identity: tuple[int, int] | None = None
+    for _ in range(_LOCK_ATTEMPTS):
+        try:
+            descriptor = os.open(lock_path, _lock_exclusive_flags(), 0o600)
+        except (FileExistsError, PermissionError):
+            try:
+                snapshot = _lock_snapshot(lock_path)
+            except PermissionError:
+                time.sleep(_LOCK_DELAY_SECONDS)
+                continue
+            if snapshot is None:
+                time.sleep(_LOCK_DELAY_SECONDS)
+                continue
+            existing_data, existing_identity, modified_at = snapshot
+            if _stale_lock_is_recoverable(existing_data, modified_at):
+                _remove_lock_if_unchanged(
+                    lock_path,
+                    existing_data,
+                    existing_identity,
+                )
+                continue
+            time.sleep(_LOCK_DELAY_SECONDS)
+            continue
+        created = os.fstat(descriptor)
+        created_identity = (created.st_dev, created.st_ino)
+        try:
+            _write_lock_descriptor(descriptor, lock_data)
+        except Exception:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            _remove_lock_if_unchanged(lock_path, lock_data, created_identity)
+            raise
+        try:
+            os.close(descriptor)
+        except Exception:
+            _remove_lock_if_unchanged(lock_path, lock_data, created_identity)
+            raise
+        lock_identity = created_identity
+        break
+    if lock_identity is None:
+        raise TimeoutError(f"timed out acquiring project lock: {lock_path}")
+
+    try:
+        yield
+    finally:
+        _remove_lock_if_unchanged(lock_path, lock_data, lock_identity)
+
+
+def _conservative_classification(existing: str | None, requested: str) -> str:
+    if existing == "restricted" or requested == "restricted":
+        return "restricted"
+    if existing == "sensitive" or requested == "sensitive":
+        return "sensitive"
+    return requested
+
+
 class CapabilitySelection(list[str]):
     """List-compatible routed capabilities with explicit routing warnings."""
 
@@ -292,7 +373,8 @@ class TaskRouter:
             raise ValueError("project must be initialized before routing tasks")
         self.project = project
         self._artifact_manifest_path = project.artifacts_dir / "manifest.yaml"
-        self._artifact_manifest_lock = Lock()
+        self._artifact_manifest_lock_path = project.artifacts_dir / ".manifest.lock"
+        self._task_context_lock_path = project.tasks_dir / ".context.lock"
 
     def select_capabilities(
         self,
@@ -343,10 +425,16 @@ class TaskRouter:
         classification = _token(classification, "classification")
         if classification not in _ARTIFACT_CLASSIFICATIONS:
             raise ValueError(f"unknown artifact classification: {classification}")
-        with self._artifact_manifest_lock:
+        with _owned_project_lock(self._artifact_manifest_lock_path):
             manifest = self._load_artifact_manifest()
+            existing = manifest["artifacts"].get(artifact_id, {}).get(
+                "classification"
+            )
             manifest["artifacts"][artifact_id] = {
-                "classification": classification,
+                "classification": _conservative_classification(
+                    existing,
+                    classification,
+                ),
             }
             _atomic_write_text(
                 self._artifact_manifest_path,
@@ -421,16 +509,64 @@ class TaskRouter:
                 + ", ".join(restricted)
             )
 
-        if context_id is None:
-            context_id = self._new_context(
-                reviewed_worker["context_id"] if reviewed_worker else None
-            )
-        else:
-            context_id = self._nonblank(context_id, "context_id")
-            if reviewed_worker and context_id == reviewed_worker["context_id"]:
-                raise ValueError("reviewer context must differ from worker context")
+        supplied_context = (
+            self._nonblank(context_id, "context_id")
+            if context_id is not None
+            else None
+        )
+        if reviewer:
+            with _owned_project_lock(self._task_context_lock_path):
+                existing_contexts = self._existing_task_contexts()
+                if supplied_context in existing_contexts:
+                    raise ValueError(
+                        "reviewer cannot reuse an existing task context"
+                    )
+                excluded_contexts = set(existing_contexts)
+                if supplied_context is not None:
+                    excluded_contexts.add(supplied_context)
+                context_id = self._new_context(excluded_contexts)
+                return self._persist_new_task(
+                    self._task_payload(
+                        capability,
+                        objective,
+                        inputs,
+                        outputs,
+                        criteria,
+                        prohibited,
+                        max_attempts,
+                        context_id,
+                        reviewed_worker,
+                    )
+                )
 
-        base_task: dict[str, Any] = {
+        context_id = supplied_context or self._new_context(set())
+        return self._persist_new_task(
+            self._task_payload(
+                capability,
+                objective,
+                inputs,
+                outputs,
+                criteria,
+                prohibited,
+                max_attempts,
+                context_id,
+                reviewed_worker,
+            )
+        )
+
+    def _task_payload(
+        self,
+        capability: str,
+        objective: str,
+        inputs: list[str],
+        outputs: list[str],
+        criteria: list[str],
+        prohibited: list[str],
+        max_attempts: int,
+        context_id: str,
+        reviewed_worker: Mapping[str, Any] | None,
+    ) -> dict[str, Any]:
+        task: dict[str, Any] = {
             "capability": capability,
             "objective": objective,
             "allowed_inputs": inputs,
@@ -439,14 +575,13 @@ class TaskRouter:
             "prohibited_actions": prohibited,
             "max_attempts": max_attempts,
             "status": "pending",
-            "role": "reviewer" if reviewer else "worker",
+            "role": "reviewer" if reviewed_worker is not None else "worker",
             "context_id": context_id,
             "creation_token": f"creation-{token_hex(16)}",
         }
         if reviewed_worker is not None:
-            base_task["review_of"] = reviewed_worker["task_id"]
-
-        return self._persist_new_task(base_task)
+            task["review_of"] = reviewed_worker["task_id"]
+        return task
 
     def _load_reviewed_worker(self, review_of: object) -> dict[str, Any]:
         if not isinstance(review_of, str):
@@ -495,17 +630,37 @@ class TaskRouter:
         return payload
 
     def _artifact_classification(self, artifact_id: str) -> str | None:
-        manifest = self._load_artifact_manifest()
-        record = manifest["artifacts"].get(artifact_id)
-        classification = record["classification"] if record is not None else None
+        with _owned_project_lock(self._artifact_manifest_lock_path):
+            manifest = self._load_artifact_manifest()
+            record = manifest["artifacts"].get(artifact_id)
+            classification = (
+                record["classification"] if record is not None else None
+            )
         if _is_restricted(artifact_id):
             return "restricted"
         return classification
 
-    def _new_context(self, excluded: str | None) -> str:
+    def _existing_task_contexts(self) -> set[str]:
+        contexts: set[str] = set()
+        for path in self.project.tasks_dir.glob("task-*.yaml"):
+            if not path.is_file():
+                raise ValueError(f"task record is not a file: {path}")
+            try:
+                payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+                validate_contract("task", payload)
+                context_id = payload["context_id"]
+            except Exception as exc:
+                raise ValueError(
+                    f"cannot inspect existing task context: {path}"
+                ) from exc
+            contexts.add(context_id)
+        return contexts
+
+    def _new_context(self, excluded: Iterable[str]) -> str:
+        excluded_contexts = set(excluded)
         for _ in range(_IDENTIFIER_ATTEMPTS):
             context_id = f"context-{uuid4().hex}"
-            if context_id != excluded:
+            if context_id not in excluded_contexts:
                 return context_id
         raise FileExistsError("could not allocate an isolated context_id")
 

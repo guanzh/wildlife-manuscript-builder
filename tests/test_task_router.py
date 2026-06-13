@@ -1,12 +1,13 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
-from threading import Barrier, Lock
+from threading import Barrier, Event, Lock
 
 import pytest
 import yaml
 
 from wmb.contracts import ContractError, validate_contract
+from wmb.core import task_router as task_router_module
 from wmb.core.project import initialize_project
 from wmb.core.task_router import TaskRouter
 
@@ -237,6 +238,61 @@ def test_reviewer_rejects_explicitly_shared_worker_context(tmp_path: Path):
         )
 
 
+@pytest.mark.parametrize("reuse_role", ["worker", "reviewer"])
+def test_reviewer_rejects_context_reused_from_any_existing_task(
+    tmp_path: Path,
+    reuse_role: str,
+):
+    router = TaskRouter(initialize_project(tmp_path))
+    reviewed_worker = router.create_task(
+        "manuscript_writer",
+        "Draft reviewed artifact",
+        [],
+        ["reviewed.md"],
+    )
+    unrelated_worker = router.create_task(
+        "manuscript_writer",
+        "Draft unrelated artifact",
+        [],
+        ["unrelated.md"],
+    )
+    existing = unrelated_worker
+    if reuse_role == "reviewer":
+        existing = router.create_task(
+            "statistical_reviewer",
+            "Review unrelated artifact",
+            ["unrelated.md"],
+            ["unrelated-review.yaml"],
+            review_of=unrelated_worker["task_id"],
+        )
+
+    with pytest.raises(ValueError, match="existing task context"):
+        router.create_task(
+            "statistical_reviewer",
+            "Review reviewed artifact",
+            ["reviewed.md"],
+            ["review.yaml"],
+            review_of=reviewed_worker["task_id"],
+            context_id=existing["context_id"],
+        )
+
+
+def test_reviewer_ignores_new_supplied_context_and_generates_its_own(tmp_path: Path):
+    router = TaskRouter(initialize_project(tmp_path))
+    worker = router.create_task("manuscript_writer", "Draft", [], ["draft.md"])
+
+    reviewer = router.create_task(
+        "statistical_reviewer",
+        "Review",
+        ["draft.md"],
+        ["review.yaml"],
+        review_of=worker["task_id"],
+        context_id="context-caller-supplied",
+    )
+
+    assert reviewer["context_id"] != "context-caller-supplied"
+
+
 def test_reviewer_requires_existing_worker_task(tmp_path: Path):
     router = TaskRouter(initialize_project(tmp_path))
 
@@ -345,6 +401,106 @@ def test_artifact_manifest_authoritatively_restricts_arbitrary_filename(
     assert manifest["artifacts"]["ordinary-looking.bin"]["classification"] == (
         "restricted"
     )
+
+
+def test_concurrent_router_instances_merge_artifact_manifest_updates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    first_router = TaskRouter(project)
+    second_router = TaskRouter(project)
+    first_write_started = Event()
+    release_first_write = Event()
+    second_loaded = Event()
+    real_atomic_write = task_router_module._atomic_write_text
+    real_second_load = second_router._load_artifact_manifest
+    write_lock = Lock()
+    writes = 0
+
+    def blocking_first_write(path, content):
+        nonlocal writes
+        with write_lock:
+            writes += 1
+            write_number = writes
+        if write_number == 1:
+            first_write_started.set()
+            release_first_write.wait(timeout=5)
+        return real_atomic_write(path, content)
+
+    def observe_second_load():
+        second_loaded.set()
+        return real_second_load()
+
+    monkeypatch.setattr(task_router_module, "_atomic_write_text", blocking_first_write)
+    monkeypatch.setattr(second_router, "_load_artifact_manifest", observe_second_load)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(first_router.register_artifact, "first.bin", "verified")
+        assert first_write_started.wait(timeout=5)
+        second = pool.submit(
+            second_router.register_artifact,
+            "second.bin",
+            "review_criteria",
+        )
+        if second_loaded.wait(timeout=0.1):
+            second.result(timeout=5)
+        release_first_write.set()
+        first.result(timeout=5)
+        second.result(timeout=5)
+
+    manifest = _load_yaml(project.artifacts_dir / "manifest.yaml")
+    assert set(manifest["artifacts"]) == {"first.bin", "second.bin"}
+
+
+def test_concurrent_artifact_classification_conflict_keeps_restricted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = initialize_project(tmp_path)
+    first_router = TaskRouter(project)
+    second_router = TaskRouter(project)
+    artifact_id = "ordinary.bin"
+    restricted_written = Event()
+    release_restricted_writer = Event()
+    real_atomic_write = task_router_module._atomic_write_text
+    write_lock = Lock()
+    writes = 0
+
+    def hold_lock_after_restricted_write(path, content):
+        nonlocal writes
+        with write_lock:
+            writes += 1
+            write_number = writes
+        real_atomic_write(path, content)
+        if write_number == 1:
+            restricted_written.set()
+            release_restricted_writer.wait(timeout=5)
+
+    monkeypatch.setattr(
+        task_router_module,
+        "_atomic_write_text",
+        hold_lock_after_restricted_write,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        restricted = pool.submit(
+            first_router.register_artifact,
+            artifact_id,
+            "restricted",
+        )
+        assert restricted_written.wait(timeout=5)
+        verified = pool.submit(
+            second_router.register_artifact,
+            artifact_id,
+            "verified",
+        )
+        release_restricted_writer.set()
+        restricted.result(timeout=5)
+        verified.result(timeout=5)
+
+    manifest = _load_yaml(project.artifacts_dir / "manifest.yaml")
+    assert manifest["artifacts"][artifact_id]["classification"] == "restricted"
 
 
 @pytest.mark.parametrize("capability", ["manuscript_writer", "statistical_reviewer"])
