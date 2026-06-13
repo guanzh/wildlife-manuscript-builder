@@ -23,6 +23,22 @@
       "type": "string",
       "minLength": 1
     },
+    "role": {
+      "enum": [
+        "worker",
+        "reviewer"
+      ]
+    },
+    "context_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "review_of": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
     "objective": {
       "type": "string",
       "minLength": 1
@@ -68,5 +84,53 @@
       ]
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "role"
+        ]
+      },
+      "then": {
+        "required": [
+          "context_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "const": "reviewer"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "review_of"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "review_of"
+        ]
+      },
+      "then": {
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "const": "reviewer"
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": true
 }
