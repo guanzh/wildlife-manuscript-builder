@@ -17,6 +17,7 @@ VALID_CONTRACTS = {
         "event_type": "transition",
         "from_status": "intake",
         "to_status": "awaiting_research_direction",
+        "decision": "PROCEED",
         "reason": "data contract reconciled",
     },
     "task": {
@@ -137,6 +138,29 @@ def test_event_rejects_malformed_timestamp():
     payload = {**VALID_CONTRACTS["event"], "timestamp": "not-a-timestamp"}
 
     with pytest.raises(ContractError, match="timestamp"):
+        validate_contract("event", payload)
+
+
+def test_event_requires_canonical_decision():
+    payload = {**VALID_CONTRACTS["event"]}
+    del payload["decision"]
+
+    with pytest.raises(ContractError, match="decision"):
+        validate_contract("event", payload)
+
+
+@pytest.mark.parametrize("decision", ["PIVOT", "proceed", ""])
+def test_event_rejects_noncanonical_decision(decision):
+    payload = {**VALID_CONTRACTS["event"], "decision": decision}
+
+    with pytest.raises(ContractError, match="decision"):
+        validate_contract("event", payload)
+
+
+def test_event_rejects_whitespace_reason():
+    payload = {**VALID_CONTRACTS["event"], "reason": "   "}
+
+    with pytest.raises(ContractError, match="reason"):
         validate_contract("event", payload)
 
 

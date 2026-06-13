@@ -394,6 +394,97 @@ def test_pending_transition_is_recovered_after_failed_rollback(
     assert _events(project.events_log) == []
 
 
+def test_tampered_pending_transition_cannot_rewrite_intake_to_candidate_level_4(
+    tmp_path: Path,
+):
+    project = initialize_project(tmp_path)
+    store = StateStore(project)
+    run_before = project.run_file.read_bytes()
+    events_before = project.events_log.read_bytes()
+    intake_run = yaml.safe_load(run_before)
+    candidate_run = {**intake_run, "status": "candidate_level_4"}
+    malicious_event = {
+        "event_id": "malicious-event",
+        "timestamp": "2026-06-13T00:00:00Z",
+        "actor": "orchestrator",
+        "event_type": "transition",
+        "from_status": "candidate_level_4",
+        "to_status": "intake",
+        "decision": "PROCEED",
+        "reason": "tampered rollback payload",
+    }
+    malicious_event_line = json.dumps(malicious_event, sort_keys=True) + "\n"
+    store._pending_path.write_text(
+        json.dumps(
+            {
+                "transaction_id": "malicious-transaction",
+                "before_run": candidate_run,
+                "projected_run": intake_run,
+                "event": malicious_event,
+                "events_before": "",
+                "events_after": malicious_event_line,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StateConsistencyError, match="pending transition"):
+        store.load_run()
+
+    assert project.run_file.read_bytes() == run_before
+    assert project.events_log.read_bytes() == events_before
+    assert store._pending_path.is_file()
+
+
+def test_pending_recovery_rejects_unproven_event_history_without_changes(
+    tmp_path: Path,
+):
+    project = initialize_project(tmp_path)
+    store = StateStore(project)
+    intake_run = yaml.safe_load(project.run_file.read_text(encoding="utf-8"))
+    projected_run = {**intake_run, "status": "awaiting_research_direction"}
+    project.run_file.write_text(
+        yaml.safe_dump(projected_run, sort_keys=False),
+        encoding="utf-8",
+    )
+    run_before = project.run_file.read_bytes()
+    events_before = project.events_log.read_bytes()
+    event = {
+        "event_id": "unproven-event",
+        "timestamp": "2026-06-13T00:00:00Z",
+        "actor": "orchestrator",
+        "event_type": "transition",
+        "from_status": "intake",
+        "to_status": "awaiting_research_direction",
+        "decision": "PROCEED",
+        "reason": "legal event with tampered history",
+    }
+    store._pending_path.write_text(
+        json.dumps(
+            {
+                "transaction_id": "tampered-history",
+                "before_run": intake_run,
+                "projected_run": projected_run,
+                "event": event,
+                "events_before": "",
+                "events_after": "",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StateConsistencyError, match="exact event append"):
+        store.load_run()
+
+    assert project.run_file.read_bytes() == run_before
+    assert project.events_log.read_bytes() == events_before
+    assert store._pending_path.is_file()
+
+
 def test_audit_detects_run_event_projection_mismatch(tmp_path: Path):
     project = initialize_project(tmp_path)
     store = StateStore(project)
@@ -439,10 +530,10 @@ def test_transition_rejects_existing_run_event_projection_mismatch(tmp_path: Pat
     )
 
 
-def test_audit_rejects_illegal_legacy_event_without_decision(tmp_path: Path):
+def test_audit_rejects_event_without_decision(tmp_path: Path):
     project = initialize_project(tmp_path)
     run = yaml.safe_load(project.run_file.read_text(encoding="utf-8"))
-    run["status"] = "candidate_level_4"
+    run["status"] = "awaiting_research_direction"
     project.run_file.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
     project.events_log.write_text(
         json.dumps(
@@ -452,8 +543,60 @@ def test_audit_rejects_illegal_legacy_event_without_decision(tmp_path: Path):
                 "actor": "orchestrator",
                 "event_type": "transition",
                 "from_status": "intake",
-                "to_status": "candidate_level_4",
-                "reason": "legacy invalid skip",
+                "to_status": "awaiting_research_direction",
+                "reason": "legacy event missing decision",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StateConsistencyError, match="decision"):
+        StateStore(project).audit()
+
+
+def test_audit_rejects_event_with_whitespace_reason(tmp_path: Path):
+    project = initialize_project(tmp_path)
+    run = yaml.safe_load(project.run_file.read_text(encoding="utf-8"))
+    run["status"] = "awaiting_research_direction"
+    project.run_file.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
+    project.events_log.write_text(
+        json.dumps(
+            {
+                "event_id": "invalid-reason-event",
+                "timestamp": "2026-06-13T00:00:00Z",
+                "actor": "orchestrator",
+                "event_type": "transition",
+                "from_status": "intake",
+                "to_status": "awaiting_research_direction",
+                "decision": "PROCEED",
+                "reason": "   ",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StateConsistencyError, match="reason"):
+        StateStore(project).audit()
+
+
+def test_audit_rejects_decision_that_does_not_authorize_transition(tmp_path: Path):
+    project = initialize_project(tmp_path)
+    run = yaml.safe_load(project.run_file.read_text(encoding="utf-8"))
+    run["status"] = "awaiting_research_direction"
+    project.run_file.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
+    project.events_log.write_text(
+        json.dumps(
+            {
+                "event_id": "mismatched-decision-event",
+                "timestamp": "2026-06-13T00:00:00Z",
+                "actor": "orchestrator",
+                "event_type": "transition",
+                "from_status": "intake",
+                "to_status": "awaiting_research_direction",
+                "decision": "REFINE",
+                "reason": "decision does not authorize target",
             }
         )
         + "\n",

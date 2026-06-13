@@ -10,6 +10,7 @@
     "event_type",
     "from_status",
     "to_status",
+    "decision",
     "reason"
   ],
   "properties": {
@@ -35,9 +36,17 @@
     "to_status": {
       "$ref": "#/$defs/run_status"
     },
+    "decision": {
+      "enum": [
+        "PROCEED",
+        "REFINE",
+        "DOWNGRADE",
+        "BLOCK"
+      ]
+    },
     "reason": {
       "type": "string",
-      "minLength": 1
+      "pattern": "\\S"
     },
     "task_ids": {
       "type": "array",

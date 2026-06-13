@@ -89,7 +89,8 @@ def test_initialize_project_is_idempotent_and_preserves_existing_records(
         project.events_log: (
             '{"event_id":"existing","timestamp":"2026-06-12T09:00:00Z",'
             '"actor":"orchestrator","event_type":"transition",'
-            '"from_status":"intake","to_status":"blocked","reason":"existing"}\n'
+            '"from_status":"intake","to_status":"blocked","decision":"BLOCK",'
+            '"reason":"existing","unblock_conditions":["existing"]}\n'
         ),
         project.rejections_log: '{"record_id": "existing"}\n',
     }
@@ -206,7 +207,8 @@ def test_initialize_project_falls_back_when_hard_links_are_unsupported(
     existing_event = (
         '{"event_id":"existing","timestamp":"2026-06-12T09:00:00Z",'
         '"actor":"orchestrator","event_type":"transition",'
-        '"from_status":"intake","to_status":"blocked","reason":"existing"}\n'
+        '"from_status":"intake","to_status":"blocked","decision":"BLOCK",'
+        '"reason":"existing","unblock_conditions":["existing"]}\n'
     )
     project.events_log.write_text(existing_event, encoding="utf-8")
 

@@ -15,10 +15,9 @@ from uuid import uuid4
 
 import yaml
 
-from wmb.contracts import validate_contract
+from wmb.contracts import ContractError, validate_contract
 from wmb.core.models import ProjectPaths
 from wmb.core.state_machine import (
-    LEGAL_TRANSITIONS,
     IllegalTransition,
     validate_transition,
 )
@@ -102,7 +101,12 @@ def _load_jsonl(content: str) -> list[dict[str, Any]]:
             raise StateConsistencyError(
                 f"event at line {line_number} is not an object"
             )
-        validate_contract("event", record)
+        try:
+            validate_contract("event", record)
+        except ContractError as exc:
+            raise StateConsistencyError(
+                f"invalid event at line {line_number}: {exc}"
+            ) from exc
         records.append(record)
     return records
 
@@ -227,7 +231,17 @@ class StateStore:
             }
 
     def _audit_locked(self, run: Mapping[str, Any]) -> list[dict[str, Any]]:
-        events = _load_jsonl(self.project.events_log.read_text(encoding="utf-8"))
+        return self._audit_snapshot(
+            run,
+            self.project.events_log.read_text(encoding="utf-8"),
+        )
+
+    def _audit_snapshot(
+        self,
+        run: Mapping[str, Any],
+        event_content: str,
+    ) -> list[dict[str, Any]]:
+        events = _load_jsonl(event_content)
         if not events and run["status"] != "intake":
             raise StateConsistencyError(
                 "run projection has no events and is not in the initial intake state"
@@ -235,37 +249,14 @@ class StateStore:
 
         previous_to: object | None = None
         for index, event in enumerate(events):
-            if event["actor"] != "orchestrator":
-                raise StateConsistencyError(
-                    "event ledger contains a non-orchestrator transition"
-                )
-            if event["event_type"] != "transition":
-                raise StateConsistencyError(
-                    "event ledger contains a non-transition event"
-                )
             if index == 0 and event["from_status"] != "intake":
                 raise StateConsistencyError(
                     "event ledger does not begin from the initial intake state"
                 )
             if previous_to is not None and event["from_status"] != previous_to:
                 raise StateConsistencyError("event ledger transition chain is broken")
-            decision = event.get("decision")
             try:
-                if event["to_status"] not in LEGAL_TRANSITIONS[event["from_status"]]:
-                    raise IllegalTransition(
-                        f"transition from {event['from_status']!r} to "
-                        f"{event['to_status']!r} is not legal"
-                    )
-                if decision is not None:
-                    validate_transition(
-                        event["from_status"],
-                        event["to_status"],
-                        decision,
-                    )
-                if event["to_status"] == "blocked":
-                    _conditions(event.get("unblock_conditions"))
-                if event["to_status"] == "downgraded":
-                    _nonblank(event.get("deliverable"), "deliverable")
+                self._validate_event_policy(event)
             except IllegalTransition as exc:
                 raise StateConsistencyError(
                     f"event ledger contains an illegal transition: {exc}"
@@ -277,6 +268,32 @@ class StateStore:
                 "run projection does not match the latest event"
             )
         return events
+
+    def _validate_event_policy(self, event: Mapping[str, Any]) -> None:
+        if event["actor"] != "orchestrator":
+            raise IllegalTransition(
+                "only actor='orchestrator' may transition canonical state"
+            )
+        if event["event_type"] != "transition":
+            raise IllegalTransition("canonical state events must be transitions")
+        _nonblank(event["reason"], "reason")
+        validate_transition(
+            event["from_status"],
+            event["to_status"],
+            event["decision"],
+        )
+        if event["decision"] == "BLOCK":
+            _conditions(event.get("unblock_conditions"))
+        elif "unblock_conditions" in event:
+            raise IllegalTransition(
+                "unblock_conditions may only accompany a BLOCK decision"
+            )
+        if event["decision"] == "DOWNGRADE":
+            _nonblank(event.get("deliverable"), "deliverable")
+        elif "deliverable" in event:
+            raise IllegalTransition(
+                "deliverable may only accompany a DOWNGRADE decision"
+            )
 
     def _load_run_locked(self) -> dict[str, Any]:
         payload = yaml.safe_load(self.project.run_file.read_text(encoding="utf-8"))
@@ -311,12 +328,44 @@ class StateStore:
         }
         if not isinstance(payload, dict) or not required.issubset(payload):
             raise StateConsistencyError("pending transition journal is incomplete")
-        validate_contract("run", payload["before_run"])
-        validate_contract("run", payload["projected_run"])
-        validate_contract("event", payload["event"])
-        _load_jsonl(payload["events_before"])
-        _load_jsonl(payload["events_after"])
+        self._validate_pending_transaction(payload)
         return payload
+
+    def _validate_pending_transaction(self, transaction: Mapping[str, Any]) -> None:
+        try:
+            before_run = transaction["before_run"]
+            projected_run = transaction["projected_run"]
+            event = transaction["event"]
+            events_before = transaction["events_before"]
+            events_after = transaction["events_after"]
+            validate_contract("run", before_run)
+            validate_contract("run", projected_run)
+            validate_contract("event", event)
+            self._validate_event_policy(event)
+            if event["from_status"] != before_run["status"]:
+                raise StateConsistencyError(
+                    "pending event does not start from before_run"
+                )
+            expected_projection = {**before_run, "status": event["to_status"]}
+            if projected_run != expected_projection:
+                raise StateConsistencyError(
+                    "pending projected_run is not the event projection"
+                )
+            if events_after != events_before + _event_line(event):
+                raise StateConsistencyError(
+                    "pending events_after is not the exact event append"
+                )
+            self._audit_snapshot(before_run, events_before)
+            self._audit_snapshot(projected_run, events_after)
+        except (
+            ContractError,
+            IllegalTransition,
+            KeyError,
+            TypeError,
+        ) as exc:
+            raise StateConsistencyError(
+                f"pending transition journal is inconsistent: {exc}"
+            ) from exc
 
     def _recover_pending_locked(self) -> None:
         if not self._pending_path.exists():
@@ -333,9 +382,19 @@ class StateStore:
         if run == transaction["before_run"] and events == transaction["events_before"]:
             self._clear_pending()
             return
-        self._rollback_locked(transaction)
+        if (
+            run == transaction["projected_run"]
+            and events == transaction["events_before"]
+        ):
+            self._rollback_locked(transaction)
+            return
+        raise StateConsistencyError(
+            "pending transition does not match a recoverable write phase; "
+            "canonical state was not changed"
+        )
 
     def _rollback_locked(self, transaction: Mapping[str, Any]) -> None:
+        self._validate_pending_transaction(transaction)
         run = self._load_run_locked()
         events = self.project.events_log.read_text(encoding="utf-8")
         valid_runs = (transaction["before_run"], transaction["projected_run"])
