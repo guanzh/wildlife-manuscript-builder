@@ -52,6 +52,34 @@ Pipe through `python -c` with `json.load(sys.stdin)` to extract title, year, DOI
 
 For the full rewriting workflow, see `references/rewriting-existing-manuscript.md`.
 
+## Executable Multi-Agent Workflow
+
+WMB now supports an executable workflow via the `wmb` CLI, which integrates with both Codex and Hermes for durable task dispatch.
+
+The canonical project state lives in `.wmb/`. Author confirmation is required for major scientific changes. The default placeholder author is `Dr. Who` and the default target journal is 《生物多样性》.
+
+For the full executable workflow documentation, see `references/multi-agent-workflow.md`. Commands:
+
+```bash
+# Initialize a project
+wmb init PROJECT
+
+# Check status
+wmb status PROJECT
+
+# Create a task
+wmb task create PROJECT --capability CAPABILITY --objective OBJECTIVE
+
+# Dispatch (dry-run by default; add --execute to run)
+wmb dispatch PROJECT TASK_ID --platform hermes|codex
+
+# Resume after interruption
+wmb resume PROJECT
+
+# Verify submission package
+wmb verify PROJECT
+```
+
 ## Pipeline: 31 Steps / 6 Phases
 
 > **Decision loop:** Key gates include PIVOT/REFINE/DOWNGRADE decisions (see `references/decision-loop.md`).

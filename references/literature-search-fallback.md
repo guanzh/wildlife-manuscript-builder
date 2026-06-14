@@ -38,9 +38,9 @@ Use sparingly — Semantic Scholar rate-limits aggressively without an API key.
 When `web_search` is unavailable and Crossref returns too many irrelevant results, use the Elicit API. It returns far more targeted literature for ecology/biodiversity topics.
 
 **Setup:**
-- API key: `ELICIT_API_KEY` in Hermes `.env` file (format: `elk_live_...`)
+- API key: read from process environment `ELICIT_API_KEY`
 - Endpoint: `https://elicit.com/api/v1/search` (POST) — **NOT** `api.elicit.com`
-- Requires: Pro plan or above; `Authorization: Bearer <key>` header
+- Requires: Pro plan or above; `Authorization: Bearer *** header
 
 **Critical: Cloudflare/Proxy bypass**
 Elicit's API is behind Cloudflare which may block requests from headless clients. Two workarounds:
@@ -51,7 +51,9 @@ Elicit's API is behind Cloudflare which may block requests from headless clients
 ```python
 import urllib.request, json, os
 
-key = "elk_live_..."  # from .env
+key = os.environ.get("ELICIT_API_KEY", "")
+if not key:
+    raise RuntimeError("ELICIT_API_KEY not set in environment")
 headers = {
     "Authorization": f"Bearer {key}",
     "Content-Type": "application/json",
