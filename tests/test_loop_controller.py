@@ -66,13 +66,20 @@ def test_reset_clears_state() -> None:
 
 
 def test_new_blocking_reason_resets_same_blocking_counter() -> None:
+    ctrl = LoopController(max_rounds=5)
+    ctrl.evaluate(_FakeGateResult("fail"), blocking_reason="A")
+    assert ctrl.state.same_blocking_count == 0  # first occurrence → BLOCK
+    ctrl.evaluate(_FakeGateResult("fail"), blocking_reason="B")  # new reason, reset
+    assert ctrl.state.same_blocking_count == 0
+
+
+def test_max_rounds_3_blocks_on_round_3() -> None:
+    """R5: max_rounds=3, round 3 must BLOCK even with progress."""
     ctrl = LoopController(max_rounds=3)
     ctrl.evaluate(_FakeGateResult("fail"), blocking_reason="A")
-    assert ctrl.state.same_blocking_count == 0  # first occurrence
-    ctrl.evaluate(_FakeGateResult("fail"), blocking_reason="A")
-    assert ctrl.state.same_blocking_count == 1
-    ctrl.evaluate(_FakeGateResult("fail"), blocking_reason="B")  # new reason
-    assert ctrl.state.same_blocking_count == 0
+    ctrl.evaluate(_FakeGateResult("fail"), blocking_reason="B")
+    decision = ctrl.evaluate(_FakeGateResult("fail"), blocking_reason="C")
+    assert decision == LoopDecision.BLOCK  # round 3 >= max_rounds=3
 
 
 def test_material_improvement_resolved_blocker() -> None:

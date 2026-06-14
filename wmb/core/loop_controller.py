@@ -54,8 +54,8 @@ class LoopController:
         """
         self._state.round += 1
 
-        # Round cap — block at max regardless
-        if self._state.round > self._state.max_rounds:
+        # Round cap — block at max (round N >= max_rounds stops)
+        if self._state.round >= self._state.max_rounds:
             return LoopDecision.BLOCK
 
         # Author confirmation overrides any other logic

@@ -45,12 +45,10 @@ class ProvenanceStore:
     # ---- analysis ----
 
     def record_analysis(self, payload: dict[str, Any]) -> str:
-        """Persist an analysis record. Idempotent for identical payload.
-
-        Returns the analysis_id.
+        """Persist an analysis record. Idempotent ONLY for identical payload.
+        Different content with same analysis_id blocks (no-clobber).
         """
         analysis_id = payload.get("analysis_id", f"analysis_{uuid4().hex[:8]}")
-        status = payload.get("status", "unknown")
 
         dest = self.analysis_dir
         dest.mkdir(parents=True, exist_ok=True)
@@ -59,7 +57,11 @@ class ProvenanceStore:
         if path.exists():
             existing = self._load_yaml(path)
             if existing == payload:
-                return analysis_id  # idempotent: skip identical record
+                return analysis_id  # idempotent: identical
+            raise ValueError(
+                f"Analysis {analysis_id} already exists with different content. "
+                "Use a new analysis_id or delete the existing record."
+            )
 
         import yaml
         with open(str(path), "w", encoding="utf-8", newline="\n") as fh:
@@ -138,13 +140,11 @@ class ProvenanceStore:
         manuscript_claim = trace.get("manuscript_claim")
         caption = trace.get("figure_or_table_caption")
 
-        # Central claim requires result card and manuscript claim
         if central:
             if not result_card:
                 report.issues.append("Central claim missing result_card")
             if not manuscript_claim:
                 report.issues.append("Central claim missing manuscript_claim")
-            # Central figure/table caption requires claim trace
             if caption and not analysis_id:
                 report.issues.append(
                     "Central figure/table caption requires an analysis trace"
@@ -155,13 +155,11 @@ class ProvenanceStore:
             if analysis is None:
                 report.issues.append(f"Analysis {analysis_id} not found")
             else:
-                # Failed analysis cannot support a claim
                 if analysis.get("status") == "failed":
                     report.issues.append(
                         f"Analysis {analysis_id} has status 'failed' — "
                         "cannot support a claim"
                     )
-                # Only successful and usable_with_caveat can support a claim
                 allowed = {"successful", "usable_with_caveat"}
                 if analysis.get("status") not in allowed:
                     report.issues.append(
@@ -169,8 +167,18 @@ class ProvenanceStore:
                         f"not in allowed set {allowed}"
                     )
 
-                # Check hash matches
+                # Check referenced file exists
                 file_path = analysis.get("file_path")
+                if file_path:
+                    resolved = Path(file_path)
+                    if not resolved.is_absolute():
+                        resolved = self._wmb.parent / resolved
+                    if not resolved.exists():
+                        report.issues.append(
+                            f"Referenced file {file_path} does not exist"
+                        )
+
+                # Check hash matches
                 declared_hash = analysis.get("content_hash")
                 if file_path and declared_hash:
                     resolved = Path(file_path)
@@ -183,9 +191,7 @@ class ProvenanceStore:
                                 f"Hash mismatch for {file_path}: "
                                 f"declared {declared_hash}, actual {actual}"
                             )
-                    # File not existing is a non-blocking notice
         else:
-            # Non-central narrative claim may omit figure caption
             if not central and not manuscript_claim:
                 report.issues.append("Claim has no manuscript_claim text")
 

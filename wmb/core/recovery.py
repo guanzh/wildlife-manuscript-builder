@@ -8,6 +8,14 @@ from pathlib import Path
 from typing import Any
 
 
+_LEGAL_STATUSES = frozenset({
+    "intake", "awaiting_research_direction", "evidence_and_analysis",
+    "result_and_claim_build", "manuscript_drafting", "independent_review",
+    "package_verification", "awaiting_final_confirmation",
+    "candidate_level_4", "downgraded", "blocked",
+})
+
+
 class RecoveryBlocked(RuntimeError):
     """Raised when canonical run state is corrupt and cannot recover."""
 
@@ -57,7 +65,7 @@ class RecoveryManager:
             report.issues.append(".wmb/ directory not found")
             return report
 
-        # 1. Validate canonical run
+        # 1. Validate canonical run against run schema
         try:
             run_data = self._load_yaml(wmb / "run.yaml")
         except Exception as exc:
@@ -69,17 +77,45 @@ class RecoveryManager:
             report.issues.append("run.yaml is not a valid mapping")
             return report
 
-        # 2. Validate event log
-        event_path = wmb / "event_log.yaml"
+        # Validate run against schema
+        try:
+            from wmb.contracts import validate_contract
+            validate_contract("run", run_data)
+        except Exception as exc:
+            report.blocked = True
+            report.issues.append(f"Run schema validation failed: {exc}")
+            return report
+
+        # 2. Validate event history
+        event_path = wmb / "logs" / "events.jsonl"
         if event_path.exists():
             try:
-                events = self._load_yaml(event_path)
-                if not isinstance(events, (list, dict)):
-                    report.issues.append("event_log has unexpected structure (non-blocking)")
+                lines = event_path.read_text(encoding="utf-8").strip().split("\n")
+                for lineno, line in enumerate(lines, 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        import json as _json
+                        _json.loads(line)
+                    except Exception:
+                        report.blocked = True
+                        report.issues.append(f"Corrupt events.jsonl at line {lineno}")
+                        return report
+                # Legal run statuses check
+                if run_data.get("status") not in _LEGAL_STATUSES:
+                    report.blocked = True
+                    report.issues.append(f"Illegal run status: {run_data.get('status')}")
+                    return report
             except Exception as exc:
                 report.blocked = True
-                report.issues.append(f"Corrupt event_log.yaml: {exc}")
+                report.issues.append(f"Cannot read events.jsonl: {exc}")
                 return report
+        elif run_data.get("status") != "intake":
+            # After intake, events.log must exist
+            report.blocked = True
+            report.issues.append("events.jsonl missing for non-intake run status")
+            return report
 
         # 3. Scan tasks directory
         tasks_dir = wmb / "tasks"

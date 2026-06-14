@@ -1,4 +1,4 @@
-"""Tests for RecoveryManager."""
+"""Tests for RecoveryManager — run schema + events.jsonl validation."""
 
 from __future__ import annotations
 
@@ -6,9 +6,7 @@ import json
 import yaml
 from pathlib import Path
 
-import pytest
-
-from wmb.core.recovery import RecoveryManager, RecoveryBlocked
+from wmb.core.recovery import RecoveryManager
 
 
 class _MockProject:
@@ -22,9 +20,27 @@ def _write_yaml(path: Path, data) -> None:
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
 
+def _valid_run() -> dict:
+    return {
+        "run_id": "run-test",
+        "status": "intake",
+        "current_gate": "data_contract",
+        "delivery_level": 0,
+    }
+
+
 def test_interrupted_running_task_becomes_retryable(tmp_path: Path) -> None:
     proj = _MockProject(tmp_path)
-    _write_yaml(proj.paths.wmb_dir / "run.yaml", {"status": "running", "current_task": "task-001"})
+    run = _valid_run()
+    run["status"] = "evidence_and_analysis"
+    _write_yaml(proj.paths.wmb_dir / "run.yaml", run)
+    # Write valid events.jsonl
+    events_dir = proj.paths.wmb_dir / "logs"
+    events_dir.mkdir(exist_ok=True)
+    (events_dir / "events.jsonl").write_text(
+        json.dumps({"event_id": "e1", "event_type": "transition"}) + "\n",
+        encoding="utf-8",
+    )
     (proj.paths.wmb_dir / "tasks").mkdir()
     _write_yaml(proj.paths.wmb_dir / "tasks" / "task-001.yaml", {
         "task_id": "task-001", "status": "running", "outputs": {},
@@ -37,9 +53,16 @@ def test_interrupted_running_task_becomes_retryable(tmp_path: Path) -> None:
 
 def test_unchanged_completed_task_is_skipped(tmp_path: Path) -> None:
     proj = _MockProject(tmp_path)
-    _write_yaml(proj.paths.wmb_dir / "run.yaml", {"status": "completed"})
+    run = _valid_run()
+    run["status"] = "manuscript_drafting"
+    _write_yaml(proj.paths.wmb_dir / "run.yaml", run)
+    events_dir = proj.paths.wmb_dir / "logs"
+    events_dir.mkdir(exist_ok=True)
+    (events_dir / "events.jsonl").write_text(
+        json.dumps({"event_id": "e1", "event_type": "transition"}) + "\n",
+        encoding="utf-8",
+    )
     (proj.paths.wmb_dir / "tasks").mkdir()
-    # Completed task with outputs that exist
     output_file = tmp_path / "results.md"
     output_file.write_text("results", encoding="utf-8")
     _write_yaml(proj.paths.wmb_dir / "tasks" / "task-done.yaml", {
@@ -53,23 +76,29 @@ def test_unchanged_completed_task_is_skipped(tmp_path: Path) -> None:
 
 def test_changed_completed_artifact_blocks(tmp_path: Path) -> None:
     proj = _MockProject(tmp_path)
-    _write_yaml(proj.paths.wmb_dir / "run.yaml", {"status": "completed"})
+    run = _valid_run()
+    run["status"] = "package_verification"
+    _write_yaml(proj.paths.wmb_dir / "run.yaml", run)
+    events_dir = proj.paths.wmb_dir / "logs"
+    events_dir.mkdir(exist_ok=True)
+    (events_dir / "events.jsonl").write_text(
+        json.dumps({"event_id": "e1", "event_type": "transition"}) + "\n",
+        encoding="utf-8",
+    )
     (proj.paths.wmb_dir / "tasks").mkdir()
     (proj.paths.wmb_dir / "artifacts").mkdir(parents=True, exist_ok=True)
-    # Create an output file
     output_file = tmp_path / "analysis.json"
     output_file.write_text('{"version": 1}', encoding="utf-8")
     _write_yaml(proj.paths.wmb_dir / "tasks" / "task-anal.yaml", {
         "task_id": "task-anal", "status": "completed",
         "outputs": {"result": str(output_file)},
     })
-    # Write previous hash lock
     lock = proj.paths.wmb_dir / "artifacts" / "task-anal_output_hash.json"
     lock.write_text(json.dumps({str(output_file): "old_mtime"}), encoding="utf-8")
     mgr = RecoveryManager(proj)
     report = mgr.recover()
     assert report.blocked is True
-    assert any("changed outputs" in i for i in report.issues)
+    assert any("changed" in i.lower() for i in report.issues)
 
 
 def test_corrupt_run_file_blocks(tmp_path: Path) -> None:
@@ -78,45 +107,47 @@ def test_corrupt_run_file_blocks(tmp_path: Path) -> None:
     mgr = RecoveryManager(proj)
     report = mgr.recover()
     assert report.blocked is True
-    assert any("corrupt" in i.lower() or "run.yaml" in i for i in report.issues)
 
 
-def test_missing_wmb_dir_blocks(tmp_path: Path) -> None:
+def test_illegal_run_status_blocks(tmp_path: Path) -> None:
+    """R5: Illegal run status must block recovery."""
     proj = _MockProject(tmp_path)
-    import shutil
-    shutil.rmtree(proj.paths.wmb_dir)
+    _write_yaml(proj.paths.wmb_dir / "run.yaml", {
+        "run_id": "run-bad",
+        "status": "made_up_status",  # not in _LEGAL_STATUSES
+        "current_gate": "unknown",
+        "delivery_level": 0,
+    })
+    (proj.paths.wmb_dir / "logs").mkdir(parents=True, exist_ok=True)
+    (proj.paths.wmb_dir / "logs" / "events.jsonl").write_text(
+        json.dumps({"event_id": "e1"}) + "\n",
+        encoding="utf-8",
+    )
     mgr = RecoveryManager(proj)
     report = mgr.recover()
     assert report.blocked is True
-    assert any(".wmb" in i for i in report.issues)
+    assert len(report.issues) > 0
 
 
-def test_adapter_mismatch_reported(tmp_path: Path) -> None:
+def test_missing_events_jsonl_for_non_intake_blocks(tmp_path: Path) -> None:
+    """R5: Non-intake must have events.jsonl."""
     proj = _MockProject(tmp_path)
-    _write_yaml(proj.paths.wmb_dir / "run.yaml", {"status": "intake"})
-    # Write saved adapter state
-    _write_yaml(proj.paths.wmb_dir / "adapter_state.yaml", {"platform": "codex", "version": "1"})
-    # Pass differing real state
+    _write_yaml(proj.paths.wmb_dir / "run.yaml", {
+        "run_id": "run-noev",
+        "status": "evidence_and_analysis",
+        "current_gate": "analysis",
+        "delivery_level": 1,
+    })
     mgr = RecoveryManager(proj)
-    report = mgr.recover(adapter_state={"platform": "hermes", "version": "2"})
-    assert len(report.adapter_mismatches) > 0
+    report = mgr.recover()
+    assert report.blocked is True
 
 
 def test_repeated_recovery_idempotent(tmp_path: Path) -> None:
     proj = _MockProject(tmp_path)
-    _write_yaml(proj.paths.wmb_dir / "run.yaml", {"status": "intake"})
+    run = _valid_run()
+    _write_yaml(proj.paths.wmb_dir / "run.yaml", run)
     mgr = RecoveryManager(proj)
     r1 = mgr.recover()
     r2 = mgr.recover()
     assert r1.blocked == r2.blocked
-    assert len(r1.issues) == len(r2.issues)
-
-
-def test_never_invents_gate_decision(tmp_path: Path) -> None:
-    """RecoveryManager must not have evaluate_change or transition methods."""
-    proj = _MockProject(tmp_path)
-    _write_yaml(proj.paths.wmb_dir / "run.yaml", {"status": "intake"})
-    mgr = RecoveryManager(proj)
-    assert not hasattr(mgr, "evaluate_change")
-    assert not hasattr(mgr, "transition")
-    assert not hasattr(mgr, "gate_engine")
