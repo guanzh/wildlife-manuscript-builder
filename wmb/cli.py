@@ -61,6 +61,23 @@ def _parser() -> argparse.ArgumentParser:
     p_change_eval.add_argument("project", help="Project directory path")
     p_change_eval.add_argument("change_file", help="Path to change JSON file")
 
+    p_transition = sub.add_parser("transition", help="Transition run status")
+    p_transition.add_argument("project")
+    p_transition.add_argument("--to", required=True, dest="transition_to")
+    p_transition.add_argument("--decision", required=True)
+    p_transition.add_argument("--reason", required=True)
+
+    p_resume = sub.add_parser("resume", help="Resume interrupted run")
+    p_resume.add_argument("project")
+
+    p_verify = sub.add_parser("verify", help="Verify submission package")
+    p_verify.add_argument("project")
+
+    p_jr = sub.add_parser("journal", help="Journal management")
+    p_jr_sub = p_jr.add_subparsers(dest="journal_command", required=True)
+    p_jr_refresh = p_jr_sub.add_parser("refresh", help="Refresh journal contract")
+    p_jr_refresh.add_argument("project")
+
     return parser
 
 
@@ -92,6 +109,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.change_command == "evaluate":
                 return _cmd_change_evaluate(args)
             print(f"Unknown change command: {args.change_command}", file=sys.stderr)
+            return 2
+        elif command == "transition":
+            return _cmd_transition(args)
+        elif command == "resume":
+            return _cmd_resume(args)
+        elif command == "verify":
+            return _cmd_verify(args)
+        elif command == "journal":
+            if args.journal_command == "refresh":
+                return _cmd_journal_refresh(args)
+            print(f"Unknown journal command: {args.journal_command}", file=sys.stderr)
             return 2
         else:
             print(f"Unknown command: {command}", file=sys.stderr)
@@ -240,3 +268,74 @@ def _cmd_change_evaluate(args: argparse.Namespace) -> int:
                 2 if "blocked" in decision.status.value else 0
     print(json.dumps(output, ensure_ascii=False))
     return exit_code
+
+
+def _cmd_transition(args: argparse.Namespace) -> int:
+    import yaml
+    path = Path(args.project)
+    run_yaml = path / ".wmb" / "run.yaml"
+    if not run_yaml.exists():
+        print(json.dumps({"status": "error", "error": "Project not initialized"}), file=sys.stderr)
+        return 2
+    with open(str(run_yaml), encoding="utf-8") as fh:
+        run_data = yaml.safe_load(fh) or {}
+    run_data["status"] = args.transition_to
+    run_data["last_decision"] = args.decision
+    run_data["last_reason"] = args.reason
+    run_yaml.write_text(yaml.safe_dump(run_data, default_flow_style=False, sort_keys=False), encoding="utf-8")
+    print(json.dumps({"status": "ok", "new_status": args.transition_to}, ensure_ascii=False))
+    return 0
+
+
+def _cmd_resume(args: argparse.Namespace) -> int:
+    from wmb.core.recovery import RecoveryManager
+    path = Path(args.project)
+    proj = _project_stub(path)
+    mgr = RecoveryManager(proj)
+    report = mgr.recover()
+    output = {
+        "blocked": report.blocked,
+        "retryable_tasks": report.retryable_tasks,
+        "unchanged_completed": report.unchanged_completed_tasks,
+        "issues": report.issues,
+    }
+    print(json.dumps(output, ensure_ascii=False))
+    return 3 if report.blocked else 0
+
+
+def _cmd_verify(args: argparse.Namespace) -> int:
+    from wmb.core.verifier import PackageVerifier
+    path = Path(args.project)
+    proj = _project_stub(path)
+    verifier = PackageVerifier(proj)
+    report = verifier.verify()
+    output = {
+        "maximum_level": report.maximum_level,
+        "blocking": report.blocking,
+        "findings": [{"code": f.code, "kind": f.kind, "blocking": f.blocking, "message": f.message}
+                     for f in report.findings],
+    }
+    print(json.dumps(output, ensure_ascii=False))
+    return 3 if report.blocking else 0
+
+
+def _cmd_journal_refresh(args: argparse.Namespace) -> int:
+    from wmb.core.journal import JournalRefresh
+    path = Path(args.project)
+    proj = _project_stub(path)
+    jr = JournalRefresh(proj)
+    contract = jr.refresh_contract()
+    output = {
+        "journal_name": contract.journal_name,
+        "status": contract.status,
+    }
+    print(json.dumps(output, ensure_ascii=False))
+    return 0
+
+
+def _project_stub(project_dir: Path) -> object:
+    from types import SimpleNamespace
+    proj = SimpleNamespace()
+    proj.paths = SimpleNamespace()
+    proj.paths.wmb_dir = project_dir / ".wmb"
+    return proj
