@@ -551,6 +551,7 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - `references/reviewer-objection-simulator.md`: stress-test novelty, methods, evidence strength, variables, limitations, journal fit.
 - `references/revision-loop.md`: evaluate, author-decide, and revise without over-inflating claims.
 - `references/rewriting-existing-manuscript.md` *(new)*: full adaptation of the 31-step pipeline for rewriting an existing manuscript rather than building from scratch — fast-pass Phase A-C, anchor on statistical gate audit (Phase D), claim narrowing as the core rewrite activity (Phase E).
+- `references/r-acoustic-hotspot-mapping.md` *(new)*: weighted KDE hotspot mapping from acoustic call-frequency data in R — coordinate cleaning from Chinese Excel formats, UTM projection for SW China, bandwidth selection, ggplot2/sf layer assembly, and common pitfalls. Use for manuscript figures under Gate 8.7 (Figure and Table Assembly).
 - `references/literature-search-fallback.md` *(new)*: when web_search is unavailable and browser hits CAPTCHAs, use Crossref/Semantic Scholar REST APIs via terminal curl for deep research literature discovery.
 - `references/domain/method-checks/arrive.md`: ARRIVE 2.0 reporting guidelines for animal research, mapped to ecology skill gates.
 - `references/domain/interpretation/evidence-quality.md`: evidence quality assessment framework adapted from GRADE for ecological studies.
@@ -580,3 +581,5 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - `scripts/make_manuscript_skeleton.py`: create a manuscript package skeleton.
 - `assets/manuscript-template.md`: IMRAD draft scaffold.
 - `assets/ai-use-statement-template.md`: AI-use disclosure scaffold.
+
+- `templates/r-acoustic-hotspot.R` *(new)*: minimal self-contained R template for acoustic call hotspot mapping — copy, replace data paths, adjust bandwidth, run. Companion to `references/r-acoustic-hotspot-mapping.md`.
