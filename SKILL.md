@@ -18,6 +18,18 @@ Final prose can be polished, but the primary deliverable is the evidence chain: 
 
 Do not try to force weak data into a high-quality paper. Match the manuscript ambition to the actual carrying capacity of the data, topic novelty, methods, and literature position.
 
+## Author Decision Points (ADP)
+
+Of the ~28 internal quality gates in this pipeline, the Agent runs almost all of them in the background. Three decisions, however, shape the entire manuscript and belong to the **author**, not to a silent Agent verdict. At these three points the Agent must **stop, lay out the evidence, present a recommended default, and let the author pick** before continuing. See `references/author-decision-points.md` for the full templates.
+
+- **ADP-1 — Direction Selection.** After exploratory analysis (Phase B), present 2-4 candidate directions grounded in the actual analysis results. Each candidate is tagged `application-practice` or `hypothesis`, with what the data can answer, the nearest literature gap, and a contribution-language ceiling. The author picks the direction; this replaces the silent decision at Gate 2.
+- **ADP-2 — Statistical Delivery Confirmation.** At Gate 3, present the central-result verdicts (ready / usable-with-caveat / needs-analysis / not-usable) and let the author confirm, request more analysis, or drop a result.
+- **ADP-3 — Claim Boundary Confirmation.** At Gate 6.5, before drafting Discussion, present the claim ledger draft with proposed narrowing and let the author lock it or push back with independent evidence.
+
+**Soft-stop with default (interaction contract).** Every ADP is a soft stop, not a hard block. The Agent presents the evidence with a recommended option marked as the default, and states explicitly: *"If you do not respond, I will proceed with [recommended option]."* If the author responds, follow their choice. If the author does not respond (unattended run, cron job, subagent), proceed with the recommended default rather than stalling. The default must always be the **most defensible** option, never the most ambitious. Do not convert an ADP into a hard block, and never skip the author-facing presentation just because a default exists.
+
+**On hypothesis directions and data-derived hypotheses.** Generating a hypothesis from data is normal science — there is no HARKing penalty and no forced downgrade for a hypothesis that emerged from the data. The only constraint is the contribution-language ceiling: the reporting language must match the evidence strength, not the origin of the hypothesis. A pattern that emerged from the data with no independent validation step is framed as hypothesis-generating/descriptive ("we observed X and propose the hypothesis that…"); confirmatory language requires an independent validation step (held-out data, new sampling round, external dataset). This is enforced through `claim-boundaries.md` and `answerable-unanswered-question.md`, and has nothing to do with whether the hypothesis preceded the data.
+
 ## When Rewriting an Existing Manuscript
 
 When the user provides a complete or partial draft (IMRAD, DOCX, Rmd + data) and asks for a rewrite rather than a from-scratch build, adapt the pipeline:
@@ -75,6 +87,8 @@ For the full rewriting workflow, see `references/rewriting-existing-manuscript.m
 
 > **🔴 CHECKPOINT · 🛑 STOP — Gate 1: Data Contract Freeze** — If counts, variable definitions, or model outputs conflict and cannot be reconciled, BLOCK. Output a data-contract issue list and the smallest defensible deliverable. Do not draft a standard manuscript.
 
+7.5. **Exploratory analysis (feeds ADP-1).** With the data contract frozen, run an exploratory analysis on the actual data: descriptive statistics, distributions, key visualizations, and initial patterns/relationships. This is data-driven discovery, not confirmatory testing — its purpose is to surface what the data can actually speak to, so that direction candidates at ADP-1 are grounded in real results rather than the variable list alone. Keep the output as a short summary (key patterns + key numbers) for the author-facing ADP-1 presentation. Do not draw conclusions or commit to a research question here.
+
 8. Grade manuscript potential with `references/manuscript-potential-rubric.md`; optionally use `scripts/score_manuscript_potential.py`.
 9. Choose a deliverable path from `references/deliverable-pathways.md`: low, medium, or high potential.
 
@@ -86,7 +100,7 @@ For the full rewriting workflow, see `references/rewriting-existing-manuscript.m
 12. Use deep research to evaluate the selected direction with `references/deep-literature-standard.md`: nearest literature, what has already been answered, what remains unanswered, target venues, method boundaries, and whether the dataset can add a defensible contribution. For a standard research article, target at least 30 verified sources before full drafting.
 13. Run `references/answerable-unanswered-question.md`.
 
-> **🔴 CHECKPOINT · 🛑 STOP — Gate 2: Answerable Question** — **PROCEED** if a specific, under-answered question is identified and the data can answer it. **REFINE** if the gap exists but the method boundary is fuzzy — narrow the question scope and re-evaluate. **DOWNGRADE** if no answerable question exists — produce a monitoring baseline, data note, local report, or methods note instead.
+> **🔴 CHECKPOINT · 🟡 ADP-1 — Author Decision Point: Direction Selection** — This is a **soft stop**: lay out the exploratory-analysis summary and 2-4 candidate directions (each tagged `application-practice`/`hypothesis`, with data-answerable depth, nearest literature gap, and contribution-language ceiling) per `references/author-decision-points.md`, mark a recommended default, and let the author pick. **PROCEED** with the author-selected (or default) direction if a specific, under-answered, data-answerable question exists. **REFINE** if the gap exists but the method boundary is fuzzy — narrow the scope and re-present. **DOWNGRADE** if no answerable question exists — produce a monitoring baseline, data note, local report, or methods note instead. If the author does not respond, proceed with the recommended default direction.
 
 14. Build an argument and terminology contract with `references/argument-terminology-contract.md`: one-sentence argument, reader promise, paragraph jobs, and canonical terms.
 
@@ -97,7 +111,7 @@ For the full rewriting workflow, see `references/rewriting-existing-manuscript.m
 16. Run `references/statistical-delivery-gate.md` to decide whether central analyses are ready, usable with caveat, need more analysis, or should be removed.
 17. For acoustic/automated-recognition manuscripts, run the method-completeness gate in `references/pre-submission-review-gates.md` and optionally `scripts/check_acoustic_method_completeness.py` on the draft.
 
-> **🔴 CHECKPOINT · 🛑 STOP — Gate 3: Statistical Delivery** — **PROCEED** if central results are "ready" or "usable with caveat". **REFINE** if results "need analysis" — run additional analysis before drafting. **BLOCK** if results are "not usable" — output a readiness report, do not draft Results.
+> **🔴 CHECKPOINT · 🟡 ADP-2 — Author Decision Point: Statistical Delivery Confirmation** — This is a **soft stop**: lay out the central-result inventory with each result's verdict (ready / usable-with-caveat / needs-analysis / not-usable) and diagnostic reason per `references/author-decision-points.md`, mark a recommended default, and let the author confirm, request more analysis, or drop a result. **PROCEED** if central results are "ready" or "usable with caveat". **REFINE** if results "need analysis" — run additional analysis before drafting. **BLOCK** if results are "not usable" — output a readiness report, do not draft Results. If the author does not respond, proceed with the recommended default (use ready/caveat results, run quick flagged analysis, drop not-usable).
 
 18. Build result cards before drafting Results. Use `references/result-card-template.md` or `scripts/build_result_cards.py`.
 19. Build a literature matrix and citation plan before drafting Introduction or Discussion; the matrix must assign sources to Introduction, Methods, Discussion, regional context, and software/data functions.
@@ -107,6 +121,9 @@ For the full rewriting workflow, see `references/rewriting-existing-manuscript.m
 
 20. Build an Introduction argument plan with `references/introduction-quality-gate.md`; define core variables, sharpen the specific gap, and map each research question to a method.
 21. Build a claim ledger with `references/claim-ledger.md` before drafting Discussion; update it after the draft.
+
+> **🔴 CHECKPOINT · 🟡 ADP-3 — Author Decision Point: Claim Boundary Confirmation** — This is a **soft stop** before drafting Discussion: lay out the claim ledger draft with each claim's strength classification and the proposed narrowing for claims the statistics don't fully support (causal→associative, qualitative label→descriptive comparison, management directive→hypothesis) per `references/author-decision-points.md`, mark adopting the narrowing as the default, and let the author lock the ledger or push back on a specific narrowing with independent citation. If the author does not respond, proceed with the proposed narrowing (the conservative default).
+
 22. Draft in this order: Methods, Results, Discussion, Introduction, Abstract, Title. Avoid putting author-task placeholders into the main scientific narrative.
 23. Run `references/discussion-conclusion-quality-gate.md` and re-run `references/section-length-quality-gate.md`.
 24. Run conclusion-strength and statistical-enhancement checks with `references/pre-submission-review-gates.md`, `scripts/check_conclusion_strength.py`, and `scripts/check_statistical_enhancements.py`; narrow strong claims that lack direct support.
@@ -482,6 +499,7 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 - Do not claim a passive recorder or machine model "replaces" field listening, human monitoring, or traditional methods unless the data directly compare those methods at the same inferential target.
 - Do not call a fixed sampling window optimal or complete unless outside-window data or strong independent citations support that claim.
 - Do not call centroid or ordination clusters core habitat, refuge, long-term use space, or home range unless independently supported.
+- Do not penalize or force-downgrade a hypothesis just because it emerged from the data. Generating hypotheses from data is normal science (exploratory/hypothesis-generating work). There is no HARKing penalty for data-derived hypotheses — the origin of the hypothesis (before vs after seeing the data) is NOT a methodological problem. The only real constraint is the contribution-language ceiling: reporting language must match evidence strength. A pattern that emerged from the data with no independent validation step is framed as hypothesis-generating/descriptive; confirmatory language ("we tested and confirmed H1", emphatic p-values) requires an independent validation step (held-out data, new sampling round, external dataset). Do not build "HARKing-warning" or "data-driven question = risky order" scaffolding into the direction-selection flow — that mislabels legitimate exploratory research. See `references/author-decision-points.md`.
 - Do not keep major manuscript claims outside the claim ledger.
 - Do not continue deep drafting if the best deliverable is a monitoring note, report, or data paper; state that path plainly.
 - Do not inflate a low-potential dataset into a high-claim manuscript.
@@ -525,6 +543,7 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 ## Bundled Resources
 
 - `references/data-type-routing.md`: data-type-specific routes, common outputs, and boundaries.
+- `references/author-decision-points.md` *(new)*: the three Author Decision Points (ADP-1 direction selection, ADP-2 statistical delivery confirmation, ADP-3 claim boundary confirmation) — soft-stop-with-default interaction contract, application-practice/hypothesis direction twofold, and the contribution-language ceiling for data-derived hypotheses.
 - `references/journal-target-contract.md`: target journal, article type, format rules, required statements, outputs, and default no-TOC manuscript rule.
 - `references/section-length-quality-gate.md`: soft Introduction, Discussion, and Conclusion budgets by article type.
 - `references/submission-metadata-contract.md`: author, affiliation, funding, ethics, permits, conflicts, data/code, and sensitive-location metadata.

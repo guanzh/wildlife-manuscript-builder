@@ -10,7 +10,9 @@
 | **BLOCK** | 计数冲突、变量定义矛盾、无法 reconciliation | 输出 data-contract issue list + 最小可交付物，不写标准论文 |
 | **REFINE** | 数据合同可以冻结但有 minor caveats | 标记 caveats → 继续但降低 manuscript potential |
 
-## Gate 2: Answerable Question（步骤 13 之后）
+## Gate 2: Answerable Question（步骤 13 之后）— 🟡 ADP-1 作者决策点（软停带默认）
+
+> 这是作者决策点：摆出探索分析摘要 + 2-4 个候选方向后由作者拍板（详见 `author-decision-points.md`）。作者无响应则按推荐默认方向继续。
 
 | Decision | Condition | Action |
 |----------|-----------|--------|
@@ -19,7 +21,9 @@
 | **DOWNGRADE** | 无 answerable question | 降级为 monitoring baseline / data note / local report / methods note |
 | **BLOCK** | 关键数据缺失导致无法回答任何问题 | 输出 readiness report + revision tasks，停止 |
 
-## Gate 3: Statistical Delivery（步骤 17 之后）
+## Gate 3: Statistical Delivery（步骤 17 之后）— 🟡 ADP-2 作者决策点（软停带默认）
+
+> 这是作者决策点：摆出每个核心结果的 verdict 后由作者确认/要求补分析/砍结果（详见 `author-decision-points.md`）。作者无响应则按推荐默认继续。
 
 | Decision | Condition | Action |
 |----------|-----------|--------|
@@ -45,6 +49,7 @@
 
 ## 通用规则
 
+- **ADP（作者决策点）**：Gate 2 / Gate 3 以及 claim ledger（步骤 21，ADP-3）是三个作者决策点，均为**软停带默认**——摆出证据 + 推荐默认，作者可拍板，无响应则按最保守的推荐默认继续，不卡死无人值守的运行。详见 `author-decision-points.md`。
 - **DOWNGRADE** 不是失败——是对数据承载力的诚实评估
 - **REFINE** 循环最多 3 次，超过则强制 DOWNGRADE 或 BLOCK
 - **BLOCK** 后必须输出明确的 task list，标注需要什么才能 unblock
