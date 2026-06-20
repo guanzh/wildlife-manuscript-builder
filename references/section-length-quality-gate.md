@@ -8,6 +8,8 @@ Length is a diagnostic, not a target to pad toward. If a section is too short, i
 
 For wildlife conservation and biodiversity manuscripts, a standard empirical article often has a main-text body of about 6,000-9,000 English words, excluding references and usually excluding abstract. When the target journal has a stricter limit, the journal target contract overrides this gate.
 
+For a standard Chinese ecology research article, target 12,000-16,000 Chinese characters in the main text. Unless the journal specifies otherwise, exclude the abstract, references, figure/table captions, and appendices from this count. A short communication, data note, or journal-specific format may use a shorter target only when that pathway is explicitly selected in the journal target contract.
+
 ## Standard Empirical Article Budget
 
 For a 6,000-9,000 word English manuscript:
@@ -19,6 +21,18 @@ For a 6,000-9,000 word English manuscript:
 | Conclusion | 150-350 words | <100 or >500 words | shorter than Discussion |
 
 Use the functional target for drafting and the review zone for warnings. A section outside the review zone can still pass if the journal format, article type, or evidence structure justifies it.
+
+## Standard Chinese Empirical Article Budget
+
+For a 12,000-16,000-character Chinese manuscript:
+
+| Section | Functional target | Review signal |
+|---|---:|---:|
+| Introduction | 1,500-2,500 Chinese characters | missing gap, definitions, or objective-to-method link |
+| Discussion | 3,000-5,000 Chinese characters | missing result-linked interpretation or padded speculation |
+| Conclusion | 500-800 Chinese characters | missing evidence boundary or repeated Discussion content |
+
+Treat a standard Chinese manuscript below 12,000 characters as under target and one above 16,000 as over target unless the journal contract or selected article type justifies the deviation. Diagnose the missing or excessive writing function; never add generic background merely to reach the target.
 
 ## Other Deliverable Paths
 
@@ -108,7 +122,7 @@ Classify section length issues as:
 
 ## Section Lengths
 
-| Section | Words | Proportion | Soft status | Reason | Action |
+| Section | Words / Chinese characters | Proportion | Soft status | Reason | Action |
 |---|---:|---:|---|---|---|
 | Introduction |  |  | ok / review / underdeveloped / overextended / journal override |  |  |
 | Discussion |  |  | ok / review / underdeveloped / overextended / journal override |  |  |
