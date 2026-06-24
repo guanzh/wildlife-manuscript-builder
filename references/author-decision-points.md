@@ -12,18 +12,17 @@ The 31-step pipeline contains ~28 internal quality gates the Agent runs on its o
 
 Deciding these silently produces a manuscript the author never agreed to. ADPs make these three decisions visible and author-owned, while keeping the rest of the machinery quiet.
 
-## Soft-Stop with Default (interaction contract)
+## Interaction Modes and Stop Levels
 
-Every ADP is a **soft stop**, not a hard block:
+Default mode is **interactive**. In this mode, ADP-1 is a **hard stop** because choosing the manuscript direction is the highest-value author judgment in a data-first workflow.
 
-- The Agent presents the evidence and a **recommended option marked as the default**.
-- The Agent states explicitly: *"If you do not respond, I will proceed with [recommended option]."*
-- If the author responds, follow the author's choice.
-- If the author does not respond (e.g. the run is unattended, a cron job, or a subagent), proceed with the recommended default rather than stalling.
+Use these stop levels:
 
-This gives the author a real intervention window without deadlocking an unattended run. The default must always be the **most defensible** option, never the most ambitious.
+- **Hard stop by default:** ADP-1 Direction Selection. The Agent presents evidence and candidate directions, then waits for the author to select, adjust, or downgrade. Do not proceed silently in interactive work.
+- **Soft stop with conservative default:** ADP-2 Statistical Delivery and ADP-3 Claim Boundary. The Agent presents evidence, marks the most defensible default, and may proceed if the author does not respond.
+- **Unattended exception:** If the user or run configuration explicitly asks for an unattended/automatic run, ADP-1 may proceed with the most defensible default after the evidence is displayed. This exception prevents cron jobs, subagents, and batch runs from stalling.
 
-Do NOT convert an ADP into a hard block. Do NOT skip the author-facing presentation just because a default exists — the evidence must always be laid out so the author *could* have intervened.
+The default must always be the **most defensible** option, never the most ambitious. Never skip the author-facing presentation just because a default exists.
 
 ---
 
@@ -41,7 +40,7 @@ Do NOT convert an ADP into a hard block. Do NOT skip the author-facing presentat
    - **What the data can answer** — to what depth, with what claim boundary.
    - **Nearest literature gap** — what is already answered, what specific gap remains (run a light `answerable-unanswered-question.md` pass per candidate).
    - **Contribution-language ceiling** — the strongest honest framing this direction supports (see below).
-3. **Recommended default** — the most defensible candidate, clearly marked.
+3. **Recommended default** — the most defensible candidate, clearly marked for reference or for explicitly unattended runs.
 
 ### Twofold direction classification
 
@@ -66,7 +65,8 @@ This is purely about *whether the wording matches what was actually done* — it
 - **Select** one candidate direction → proceed to argument & terminology contract.
 - **Adjust** → refine scope/framing of a candidate and re-present.
 - **Downgrade** → choose a monitoring baseline / data note / local report / methods note path.
-- **No response** → proceed with the recommended default direction.
+- **No response in interactive mode** → stop with the ADP-1 package and wait for author choice.
+- **No response in explicitly unattended mode** → proceed with the recommended default direction.
 
 ### Output template
 
@@ -93,8 +93,12 @@ This is purely about *whether the wording matches what was actually done* — it
 - ...
 
 ## Recommendation
-- Default if no response: Direction A
+- Recommended default for unattended mode: Direction A
 - Reason it is the most defensible:
+
+## Interaction status
+- Interactive mode: do not proceed until the author selects, adjusts, or downgrades.
+- Unattended mode: proceed with the recommended default if no response is possible.
 
 ## Author choice: [ select A/B/C | adjust | downgrade ]
 ```
@@ -177,4 +181,4 @@ This is purely about *whether the wording matches what was actually done* — it
 
 ## Relationship to existing gates
 
-ADPs do not replace the internal gates' *logic* — the data contract, statistical delivery gate, and claim ledger still produce their full analysis. ADPs change **who makes the call and whether it is visible**: the Agent surfaces the gate's output to the author at these three points instead of deciding silently. All other gates (figure-claim trace, reviewer simulation, citation coverage, etc.) remain fully automatic in the background.
+ADPs do not replace the internal gates' *logic* — the data contract, statistical delivery gate, and claim ledger still produce their full analysis. ADPs change **who makes the call and whether it is visible**: the Agent surfaces the gate's output to the author at these three points instead of deciding silently. ADP-1 is author-owned by default; ADP-2 and ADP-3 may use conservative defaults after presenting evidence. All other gates (figure-claim trace, reviewer simulation, citation coverage, etc.) remain fully automatic in the background.

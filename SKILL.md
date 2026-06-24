@@ -20,13 +20,24 @@ Do not try to force weak data into a high-quality paper. Match the manuscript am
 
 ## Author Decision Points (ADP)
 
-Of the ~28 internal quality gates in this pipeline, the Agent runs almost all of them in the background. Three decisions, however, shape the entire manuscript and belong to the **author**, not to a silent Agent verdict. At these three points the Agent must **stop, lay out the evidence, present a recommended default, and let the author pick** before continuing. See `references/author-decision-points.md` for the full templates.
+Of the ~28 internal quality gates in this pipeline, the Agent runs almost all of them in the background. Three decisions, however, shape the entire manuscript and belong to the **author**, not to a silent Agent verdict. At these three points the Agent must **stop, lay out the evidence, present a recommended default when useful, and let the author pick** before continuing. See `references/author-decision-points.md` for the full templates.
 
-- **ADP-1 — Direction Selection.** After exploratory analysis (Phase B), present 2-4 candidate directions grounded in the actual analysis results. Each candidate is tagged `application-practice` or `hypothesis`, with what the data can answer, the nearest literature gap, and a contribution-language ceiling. The author picks the direction; this replaces the silent decision at Gate 2.
+- **ADP-1 — Direction Selection.** After exploratory analysis (Phase B), present 2-4 candidate directions grounded in the actual analysis results. Each candidate is tagged `application-practice` or `hypothesis`, with what the data can answer, the nearest literature gap, and a contribution-language ceiling. In default `interactive` mode, this is a **hard stop**: the author must select, adjust, or downgrade before the Agent continues. This replaces the silent decision at Gate 2.
 - **ADP-2 — Statistical Delivery Confirmation.** At Gate 3, present the central-result verdicts (ready / usable-with-caveat / needs-analysis / not-usable) and let the author confirm, request more analysis, or drop a result.
 - **ADP-3 — Claim Boundary Confirmation.** At Gate 6.5, before drafting Discussion, present the claim ledger draft with proposed narrowing and let the author lock it or push back with independent evidence.
 
-**Soft-stop with default (interaction contract).** Every ADP is a soft stop, not a hard block. The Agent presents the evidence with a recommended option marked as the default, and states explicitly: *"If you do not respond, I will proceed with [recommended option]."* If the author responds, follow their choice. If the author does not respond (unattended run, cron job, subagent), proceed with the recommended default rather than stalling. The default must always be the **most defensible** option, never the most ambitious. Do not convert an ADP into a hard block, and never skip the author-facing presentation just because a default exists.
+**Interaction mode.** Default mode is `interactive`.
+
+- ADP-1 is a hard stop in `interactive` mode because manuscript direction is the highest-value author judgment in data-first work.
+- ADP-2 and ADP-3 are soft stops with conservative defaults: the Agent presents the evidence, marks the most defensible default, and may continue if the author does not respond.
+- `unattended` mode is allowed only when the user or run configuration explicitly asks for an unattended/automatic run; in that mode ADP-1 may proceed with the most defensible default after the evidence is displayed.
+- Never use the most ambitious option as a default.
+
+**Important judgment levels.**
+
+- **Must ask the author:** ADP-1 direction selection; changing the article type or deliverable path; keeping or dropping a central conclusion; using strong causal, mechanistic, management-effectiveness, standard-protocol, or replacement claims; publishing sensitive locations or data; authorship, permissions, submission, payment, or remote-state changes.
+- **May proceed with conservative default:** ADP-2 statistical delivery handling; ADP-3 claim narrowing; terminology normalization; citation/format cleanup; low-risk language edits.
+- **Automatic background checks:** file and column audit, count reconciliation, citation coverage, process-language checks, figure-claim trace, layout QA, sensitive-data scans, and delivery-readiness scoring.
 
 **On hypothesis directions and data-derived hypotheses.** Generating a hypothesis from data is normal science — there is no HARKing penalty and no forced downgrade for a hypothesis that emerged from the data. The only constraint is the contribution-language ceiling: the reporting language must match the evidence strength, not the origin of the hypothesis. A pattern that emerged from the data with no independent validation step is framed as hypothesis-generating/descriptive ("we observed X and propose the hypothesis that…"); confirmatory language requires an independent validation step (held-out data, new sampling round, external dataset). This is enforced through `claim-boundaries.md` and `answerable-unanswered-question.md`, and has nothing to do with whether the hypothesis preceded the data.
 
@@ -70,6 +81,18 @@ For the full rewriting workflow, see `references/rewriting-existing-manuscript.m
 > **Watchdog:** Quality sentinel runs throughout — see `references/sentinel-watchdog.md`.
 > **Debate:** Multi-perspective debate available at direction selection and peer review — see `references/multi-perspective-debate.md`.
 
+### Lightweight Exploration Loop
+
+Use this loop when the author starts from a dataset and does not yet know the manuscript direction. Its purpose is to find a defensible direction before the full manuscript machinery runs.
+
+1. Freeze a minimal data contract: source inventory, core variables, survey effort, count reconciliation, and manuscript-safe facts.
+2. Run exploratory analysis on the actual data: descriptive statistics, distributions, key visualizations, and initial relationships.
+3. Grade manuscript potential and identify the strongest limiting factor.
+4. Generate 2-4 candidate directions grounded in the exploratory results, each with data-answerable depth and a contribution-language ceiling.
+5. Run a light nearest-literature gap check for each candidate; do not require the full 30-source deep research standard until a direction is selected.
+6. Stop at ADP-1. In default `interactive` mode, ask the author to select, adjust, or downgrade before continuing.
+7. After direction confirmation, proceed to full deep research, statistical delivery, result cards, claim ledger, and drafting.
+
 **Phase A: Discovery & Permission（步骤 1-4）**
 *Goal: Confirm what data exists, what's missing, and where the manuscript is headed — before any analysis.*
 
@@ -100,7 +123,7 @@ For the full rewriting workflow, see `references/rewriting-existing-manuscript.m
 12. Use deep research to evaluate the selected direction with `references/deep-literature-standard.md`: nearest literature, what has already been answered, what remains unanswered, target venues, method boundaries, and whether the dataset can add a defensible contribution. For a standard research article, target at least 30 verified sources before full drafting.
 13. Run `references/answerable-unanswered-question.md`.
 
-> **🔴 CHECKPOINT · 🟡 ADP-1 — Author Decision Point: Direction Selection** — This is a **soft stop**: lay out the exploratory-analysis summary and 2-4 candidate directions (each tagged `application-practice`/`hypothesis`, with data-answerable depth, nearest literature gap, and contribution-language ceiling) per `references/author-decision-points.md`, mark a recommended default, and let the author pick. **PROCEED** with the author-selected (or default) direction if a specific, under-answered, data-answerable question exists. **REFINE** if the gap exists but the method boundary is fuzzy — narrow the scope and re-present. **DOWNGRADE** if no answerable question exists — produce a monitoring baseline, data note, local report, or methods note instead. If the author does not respond, proceed with the recommended default direction.
+> **🔴 CHECKPOINT · 🟡 ADP-1 — Author Decision Point: Direction Selection** — In default `interactive` mode, this is a **hard stop**: lay out the exploratory-analysis summary and 2-4 candidate directions (each tagged `application-practice`/`hypothesis`, with data-answerable depth, nearest literature gap, and contribution-language ceiling) per `references/author-decision-points.md`, mark a recommended default for reference, and wait for the author to select, adjust, or downgrade. **PROCEED** only with the author-selected direction if a specific, under-answered, data-answerable question exists. **REFINE** if the gap exists but the method boundary is fuzzy — narrow the scope and re-present. **DOWNGRADE** if no answerable question exists — produce a monitoring baseline, data note, local report, or methods note instead. In explicitly requested `unattended` mode only, proceed with the most defensible default direction if the author does not respond.
 
 14. Build an argument and terminology contract with `references/argument-terminology-contract.md`: one-sentence argument, reader promise, paragraph jobs, and canonical terms.
 
@@ -543,7 +566,7 @@ Do not call a manuscript submission-ready unless all Level 4 requirements are co
 ## Bundled Resources
 
 - `references/data-type-routing.md`: data-type-specific routes, common outputs, and boundaries.
-- `references/author-decision-points.md` *(new)*: the three Author Decision Points (ADP-1 direction selection, ADP-2 statistical delivery confirmation, ADP-3 claim boundary confirmation) — soft-stop-with-default interaction contract, application-practice/hypothesis direction twofold, and the contribution-language ceiling for data-derived hypotheses.
+- `references/author-decision-points.md` *(new)*: the three Author Decision Points (ADP-1 direction selection, ADP-2 statistical delivery confirmation, ADP-3 claim boundary confirmation) — interaction modes, ADP-1 hard stop by default, ADP-2/ADP-3 conservative defaults, application-practice/hypothesis direction twofold, and the contribution-language ceiling for data-derived hypotheses.
 - `references/journal-target-contract.md`: target journal, article type, format rules, required statements, outputs, and default no-TOC manuscript rule.
 - `references/section-length-quality-gate.md`: soft Introduction, Discussion, and Conclusion budgets by article type.
 - `references/submission-metadata-contract.md`: author, affiliation, funding, ethics, permits, conflicts, data/code, and sensitive-location metadata.
