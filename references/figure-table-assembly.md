@@ -28,6 +28,14 @@ For every central figure or table, record the source-data route in `data-availab
 |---|---|---|---|---|---|
 |  | yes / no / not applicable | yes / no | yes / no / not applicable | yes / no / not applicable |  |
 
+Caption claims should be result-bearing, not merely descriptive. A caption should state the bounded finding the reader can take from the figure/table, while staying no stronger than the statistical delivery gate, result card, and claim ledger allow.
+
+Add this check when preparing reviewable, journal-format, or submission-ready outputs:
+
+| Item | Caption states bounded key finding? | Trace matches result card? | Claim no stronger than ledger? | Action |
+|---|---|---|---|---|
+|  | yes / no | yes / no | yes / no | keep / narrow caption / move to supplement / remove |
+
 ## Required Main Outputs
 
 For camera-trap community manuscripts, consider:
@@ -65,12 +73,12 @@ Internal draft:
 
 Reviewable manuscript:
 
-- Main figures and tables are present or attached; captions are complete.
+- Main figures and tables are present or attached; captions are complete and state bounded key findings where appropriate.
 
 Journal-format manuscript:
 
-- Figures/tables match target-journal placement rules, are referenced in text, and have source-data routes mapped.
+- Figures/tables match target-journal placement rules, are referenced in text, have source-data routes mapped, and caption claims pass the figure-claim trace.
 
 Submission-ready package:
 
-- Figures/tables are final quality, captions self-contained, source data mapped, sensitive data handled, and supplementary files prepared.
+- Figures/tables are final quality, captions self-contained, caption claims bounded, source data mapped, sensitive data handled, and supplementary files prepared.

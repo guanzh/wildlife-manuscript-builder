@@ -11,10 +11,11 @@ Improve the manuscript within its evidence grade. Do not upgrade the apparent qu
 1. Polish and improve the draft.
 2. Evaluate the completed content against manuscript potential, claim boundaries, journal fit, and reviewer risk.
 3. Recheck the data contract, result cards, claim ledger, citation coverage, and reviewer-objection simulation.
-4. Recheck the journal target contract, submission metadata, author-knowledge integration, statistical delivery gate, figure/table assembly, reference verification, and delivery readiness score.
-5. Produce a decision list for the author.
-6. Wait for author choices or infer only low-risk edits if the user explicitly asks for automatic revision.
-7. Revise again within the confirmed scope.
+4. For every medium, high, or fatal reviewer objection, carry forward its route-back gate and repair artifact; do not collapse it into a generic rewrite task.
+5. Recheck the journal target contract, submission metadata, author-knowledge integration, statistical delivery gate, figure/table assembly, reference verification, and delivery readiness score.
+6. Produce a decision list for the author.
+7. Wait for author choices or infer only low-risk edits if the user explicitly asks for automatic revision.
+8. Revise again within the confirmed scope.
 
 ## Evaluation Categories
 
@@ -57,6 +58,7 @@ Group suggestions into:
 - Argument/terminology: unstable central argument, inconsistent terms, undefined abbreviations, or paragraph jobs that hide unsupported claims.
 - Delivery blockers: missing journal target contract, unresolved submission metadata, unassembled figures/tables, unverified central references, accidental table of contents, or overstated delivery readiness level.
 - Data availability blockers: missing data/code route, missing source data for central figures/tables, unclear sensitive-data restrictions, or absent repository/access process.
+- Reviewer route-back tasks: medium/high/fatal objections grouped by owning gate and required repair artifact.
 - Section balance: unexplained underdeveloped or overextended Introduction, Discussion, or Conclusion.
 - Should do: better figures, clearer limitations, stronger nearest literature, sensitivity checks.
 - Could do: stylistic polish, alternative title, improved captions, supplemental framing.

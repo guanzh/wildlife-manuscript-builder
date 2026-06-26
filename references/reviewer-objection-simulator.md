@@ -30,9 +30,9 @@ Simulate at least five reviewer roles:
 
 ## Objection Table
 
-| Reviewer lens | Likely objection | Severity | Evidence behind objection | Required response | Manuscript action | Status |
-|---|---|---|---|---|---|---|
-| novelty / data design / method / conservation / citation / sensitive data |  | low / medium / high / fatal | data contract / result card / claim ledger / literature matrix / missing metadata | revise / narrow / add limitation / add citation / run analysis / downgrade / author verification |  | open / addressed / disclosed / blocks submission |
+| Reviewer lens | Likely objection | Severity | Evidence behind objection | Required response | Route back to gate | Repair artifact | Manuscript action | Status |
+|---|---|---|---|---|---|---|---|---|
+| novelty / data design / method / conservation / citation / sensitive data |  | low / medium / high / fatal | data contract / result card / claim ledger / literature matrix / missing metadata | revise / narrow / add limitation / add citation / run analysis / downgrade / author verification | Gate number/name | file or gate output to update |  | open / addressed / disclosed / blocks submission |
 
 ## High-Risk Claims To Rewrite
 
@@ -69,6 +69,23 @@ For each medium, high, or fatal objection, choose one:
 - downgrade: change deliverable type.
 - author verification: require permit, ethics, metadata, or project decision from the author.
 
+## Route-Back Rules
+
+Reviewer objections must not become generic "polish" tasks. Route each medium, high, or fatal objection back to the earliest gate that owns the missing evidence or decision, then name the repair artifact that must change.
+
+| Objection pattern | Route back to | Repair artifact |
+|---|---|---|
+| Novelty is weak, local-only, or the gap is merely "few studies exist" | Gate 3 / Gate 3.5 | `answerable-unanswered-question.md` output; one-sentence contribution; possible downgrade decision |
+| Introduction lacks a specific gap, definitions, or objective-method alignment | Gate 7.5 | Introduction argument plan and citation placement |
+| Literature coverage is shallow, outdated, or missing nearest-neighbor comparisons | Gate 7 | Literature matrix with source function and A/B/C/D use depth |
+| Statistical result cannot support the central claim | Gate 5.5 / ADP-2 | Statistical delivery gate verdict and result-card status |
+| Claim is causal, mechanistic, replacement, or management-effectiveness language without support | Gate 6.5 / ADP-3 | Claim ledger narrowing and claim-boundary wording |
+| Figure or table is planned but not assembled, unreadable, or not referenced in text | Gate 8.7 | Figure/table inventory, caption checklist, layout QA |
+| Caption asserts a stronger claim than the statistics or result card supports | Gate 8.72 | Figure-claim trace; narrowed caption or removed central figure |
+| Data/code availability, source data, or sensitive-data restrictions are unclear | Gate 8.75 / Gate 8.8 | Data availability/source-data map; sensitive-data security decision |
+| Citation mismatch, unverifiable source, or reference-list drift | Gate 9 | Citation coverage check and reference verification |
+| Metadata, permits, ethics, authorship, or data authorization is missing | Gate 1.6 / Gate 1.8 | Submission metadata contract and information-gap list |
+
 ## Common Objections By Data Type
 
 按当前数据类型加载对应 objection 清单。文件位于 `references/domain/objections/`。
@@ -89,4 +106,4 @@ For each medium, high, or fatal objection, choose one:
 
 ## Final Rule
 
-Do not treat reviewer-objection simulation as optional polish. If a high or fatal objection remains open, either fix it, downgrade the deliverable, or disclose it as a limitation before finalizing.
+Do not treat reviewer-objection simulation as optional polish. If a high or fatal objection remains open, either fix it, downgrade the deliverable, or disclose it as a limitation before finalizing. If a medium, high, or fatal objection has no route-back gate and repair artifact, the simulation is incomplete.

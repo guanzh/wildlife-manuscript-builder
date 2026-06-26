@@ -137,7 +137,7 @@ Use this loop when the author starts from a dataset and does not yet know the ma
 > **🔴 CHECKPOINT · 🟡 ADP-2 — Author Decision Point: Statistical Delivery Confirmation** — This is a **soft stop**: lay out the central-result inventory with each result's verdict (ready / usable-with-caveat / needs-analysis / not-usable) and diagnostic reason per `references/author-decision-points.md`, mark a recommended default, and let the author confirm, request more analysis, or drop a result. **PROCEED** if central results are "ready" or "usable with caveat". **REFINE** if results "need analysis" — run additional analysis before drafting. **BLOCK** if results are "not usable" — output a readiness report, do not draft Results. If the author does not respond, proceed with the recommended default (use ready/caveat results, run quick flagged analysis, drop not-usable).
 
 18. Build result cards before drafting Results. Use `references/result-card-template.md` or `scripts/build_result_cards.py`.
-19. Build a literature matrix and citation plan before drafting Introduction or Discussion; the matrix must assign sources to Introduction, Methods, Discussion, regional context, and software/data functions.
+19. Build a literature matrix and citation plan before drafting Introduction or Discussion; the matrix must assign sources to Introduction, Methods, Discussion, regional context, and software/data functions, with A/B/C/D use depth so only argument-bearing or necessary support sources enter the manuscript.
 
 **Phase E: Drafting & Quality（步骤 20-28）**
 *Goal: Write the manuscript, then stress-test every claim, section, and figure.*
@@ -439,13 +439,15 @@ Strong unsupported wording must be revised before reviewer-objection simulation.
 
 ### Gate 8.5: Reviewer-Objection Simulation
 
-Before finalizing the draft, simulate likely reviewer objections with `references/reviewer-objection-simulator.md`. Convert serious objections into revision tasks, added limitations, stronger evidence links, or a downgraded deliverable path.
+Before finalizing the draft, simulate likely reviewer objections with `references/reviewer-objection-simulator.md`. Convert serious objections into revision tasks, added limitations, stronger evidence links, or a downgraded deliverable path. For every medium, high, or fatal objection, record the route-back gate and repair artifact instead of treating the issue as generic polish.
 
 ### Gate 8.7: Figure and Table Assembly
 
 Before calling a manuscript journal-format or submission-ready, run `references/figure-table-assembly.md`.
 
 Main figures/tables must be present, attached, or explicitly marked as blocked. Captions should include sample size, units, uncertainty, and sensitive-location handling where relevant.
+
+Captions should state a bounded key finding when the figure/table carries a central result, but the caption claim must be no stronger than the statistical delivery gate, result card, and claim ledger allow.
 
 For DOCX outputs, also run `scripts/check_docx_layout_qa.py` or manually verify title duplication, table breaks, caption placement, figure readability, Chinese punctuation, unresolved placeholders, image embedding, table of contents absence, and sensitive-map masking.
 
